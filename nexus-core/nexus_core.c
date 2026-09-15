@@ -30,36 +30,36 @@ static void put32(uint8_t *p, uint32_t v) {
     p[3] = (uint8_t)v;
 }
 
-uint8_t nexus_core_channel_for_type(uint8_t frame_type) {
-    switch (frame_type) {
-    case NEXUS_CORE_TYPE_VIDEO:
-        return NEXUS_CORE_CHANNEL_VIDEO;
-    case NEXUS_CORE_TYPE_INPUT:
-        return NEXUS_CORE_CHANNEL_INPUT;
-    case NEXUS_CORE_TYPE_KNOCK:
-    case NEXUS_CORE_TYPE_KEEPALIVE:
-    case NEXUS_CORE_TYPE_PATH_CHALLENGE:
-    case NEXUS_CORE_TYPE_PATH_RESPONSE:
-        return NEXUS_CORE_CHANNEL_PROBE;
+uint8_t nexus_core_lane_for_kind(uint8_t kind) {
+    switch (kind) {
+    case NEXUS_CORE_KIND_MEDIA:
+        return NEXUS_CORE_LANE_MEDIA;
+    case NEXUS_CORE_KIND_ACTION:
+        return NEXUS_CORE_LANE_ACTION;
+    case NEXUS_CORE_KIND_HELLO:
+    case NEXUS_CORE_KIND_PULSE:
+    case NEXUS_CORE_KIND_TRACE:
+    case NEXUS_CORE_KIND_TRACE_REPLY:
+        return NEXUS_CORE_LANE_TRACE;
     default:
-        return NEXUS_CORE_CHANNEL_CONTROL;
+        return NEXUS_CORE_LANE_COMMAND;
     }
 }
 
-uint16_t nexus_core_flags_for_type(uint8_t frame_type) {
-    switch (frame_type) {
-    case NEXUS_CORE_TYPE_VIDEO:
-        return NEXUS_CORE_FLAG_FRAGMENT;
-    case NEXUS_CORE_TYPE_INPUT:
-    case NEXUS_CORE_TYPE_SYNC_KEYFRAME:
-    case NEXUS_CORE_TYPE_SIGNAL:
-        return NEXUS_CORE_FLAG_ACK_ELICITING | NEXUS_CORE_FLAG_RELIABLE;
-    case NEXUS_CORE_TYPE_KNOCK:
-    case NEXUS_CORE_TYPE_KEEPALIVE:
-    case NEXUS_CORE_TYPE_PATH_CHALLENGE:
-        return NEXUS_CORE_FLAG_ACK_ELICITING | NEXUS_CORE_FLAG_PROBE;
-    case NEXUS_CORE_TYPE_PATH_RESPONSE:
-        return NEXUS_CORE_FLAG_PROBE;
+uint16_t nexus_core_flags_for_kind(uint8_t kind) {
+    switch (kind) {
+    case NEXUS_CORE_KIND_MEDIA:
+        return NEXUS_CORE_FLAG_PARTIAL;
+    case NEXUS_CORE_KIND_ACTION:
+    case NEXUS_CORE_KIND_REFRESH:
+    case NEXUS_CORE_KIND_CONTROL:
+        return NEXUS_CORE_FLAG_RECEIPT_WANTED | NEXUS_CORE_FLAG_ORDERED;
+    case NEXUS_CORE_KIND_HELLO:
+    case NEXUS_CORE_KIND_PULSE:
+    case NEXUS_CORE_KIND_TRACE:
+        return NEXUS_CORE_FLAG_RECEIPT_WANTED | NEXUS_CORE_FLAG_TRACE;
+    case NEXUS_CORE_KIND_TRACE_REPLY:
+        return NEXUS_CORE_FLAG_TRACE;
     default:
         return 0;
     }
@@ -106,19 +106,19 @@ uint32_t nexus_core_pair_stream_id(uint32_t stream_id) {
     return stream_id ^ 1u;
 }
 
-int nexus_core_route_action(uint8_t frame_type) {
-    switch (frame_type) {
-    case NEXUS_CORE_TYPE_KNOCK:
-        return NEXUS_CORE_ROUTE_KNOCK_RESPONSE;
-    case NEXUS_CORE_TYPE_SIGNAL:
-    case NEXUS_CORE_TYPE_VIDEO:
-    case NEXUS_CORE_TYPE_INPUT:
-    case NEXUS_CORE_TYPE_KEEPALIVE:
-    case NEXUS_CORE_TYPE_SYNC_KEYFRAME:
-    case NEXUS_CORE_TYPE_ACK:
-    case NEXUS_CORE_TYPE_NACK:
-    case NEXUS_CORE_TYPE_PATH_CHALLENGE:
-    case NEXUS_CORE_TYPE_PATH_RESPONSE:
+int nexus_core_route_action(uint8_t kind) {
+    switch (kind) {
+    case NEXUS_CORE_KIND_HELLO:
+        return NEXUS_CORE_ROUTE_HELLO_REPLY;
+    case NEXUS_CORE_KIND_CONTROL:
+    case NEXUS_CORE_KIND_MEDIA:
+    case NEXUS_CORE_KIND_ACTION:
+    case NEXUS_CORE_KIND_PULSE:
+    case NEXUS_CORE_KIND_REFRESH:
+    case NEXUS_CORE_KIND_RECEIPT:
+    case NEXUS_CORE_KIND_GAP:
+    case NEXUS_CORE_KIND_TRACE:
+    case NEXUS_CORE_KIND_TRACE_REPLY:
         return NEXUS_CORE_ROUTE_RELAY;
     default:
         return NEXUS_CORE_ROUTE_DROP;
@@ -137,22 +137,22 @@ int nexus_core_decode(const uint8_t *data, size_t len, nexus_core_header *out) {
     }
 
     uint8_t header_len = data[6];
-    uint16_t payload_len = be16(data + 28);
-    if (header_len < NEXUS_CORE_HEADER_LEN || len < (size_t)header_len + payload_len) {
+    uint16_t body_len = be16(data + 28);
+    if (header_len < NEXUS_CORE_HEADER_LEN || len < (size_t)header_len + body_len) {
         return -4;
     }
 
     out->version = data[2];
-    out->frame_type = data[3];
+    out->kind = data[3];
     out->flags = be16(data + 4);
     out->header_len = header_len;
-    out->channel_id = data[7];
+    out->lane_id = data[7];
     out->stream_id = be32(data + 8);
     out->seq_num = be32(data + 12);
-    out->ack_num = be32(data + 16);
-    out->ack_bits = be32(data + 20);
+    out->receipt_num = be32(data + 16);
+    out->receipt_bits = be32(data + 20);
     out->timestamp_ms = be32(data + 24);
-    out->payload_len = payload_len;
+    out->body_len = body_len;
     out->path_id = be16(data + 30);
     return 0;
 }
@@ -165,93 +165,93 @@ int nexus_core_encode(const nexus_core_header *header, uint8_t *out, size_t len)
     out[0] = 'N';
     out[1] = 'X';
     out[2] = NEXUS_CORE_VERSION;
-    out[3] = header->frame_type;
+    out[3] = header->kind;
     put16(out + 4, header->flags);
     out[6] = NEXUS_CORE_HEADER_LEN;
-    out[7] = header->channel_id;
+    out[7] = header->lane_id;
     put32(out + 8, header->stream_id);
     put32(out + 12, header->seq_num);
-    put32(out + 16, header->ack_num);
-    put32(out + 20, header->ack_bits);
+    put32(out + 16, header->receipt_num);
+    put32(out + 20, header->receipt_bits);
     put32(out + 24, header->timestamp_ms);
-    put16(out + 28, header->payload_len);
+    put16(out + 28, header->body_len);
     put16(out + 30, header->path_id);
     return NEXUS_CORE_HEADER_LEN;
 }
 
-int nexus_core_pack_frame(uint8_t frame_type,
+int nexus_core_pack_frame(uint8_t kind,
                           uint32_t stream_id,
                           uint32_t seq_num,
-                          uint32_t ack_num,
-                          uint32_t ack_bits,
+                          uint32_t receipt_num,
+                          uint32_t receipt_bits,
                           uint16_t path_id,
-                          const uint8_t *payload,
-                          size_t payload_len,
+                          const uint8_t *body,
+                          size_t body_len,
                           uint8_t *out,
                           size_t out_len) {
-    if (!out || payload_len > 65535u || out_len < NEXUS_CORE_HEADER_LEN + payload_len) {
+    if (!out || body_len > 65535u || out_len < NEXUS_CORE_HEADER_LEN + body_len) {
         return -1;
     }
-    if (payload_len > 0 && !payload) {
+    if (body_len > 0 && !body) {
         return -2;
     }
 
     nexus_core_header header;
     header.version = NEXUS_CORE_VERSION;
-    header.frame_type = frame_type;
-    header.flags = nexus_core_flags_for_type(frame_type);
+    header.kind = kind;
+    header.flags = nexus_core_flags_for_kind(kind);
     header.header_len = NEXUS_CORE_HEADER_LEN;
-    header.channel_id = nexus_core_channel_for_type(frame_type);
+    header.lane_id = nexus_core_lane_for_kind(kind);
     header.stream_id = stream_id;
     header.seq_num = seq_num;
-    header.ack_num = ack_num;
-    header.ack_bits = ack_bits;
+    header.receipt_num = receipt_num;
+    header.receipt_bits = receipt_bits;
     header.timestamp_ms = nexus_core_now_ms();
-    header.payload_len = (uint16_t)payload_len;
+    header.body_len = (uint16_t)body_len;
     header.path_id = path_id;
 
     int header_len = nexus_core_encode(&header, out, out_len);
     if (header_len < 0) {
         return header_len;
     }
-    if (payload_len > 0) {
-        memcpy(out + header_len, payload, payload_len);
+    if (body_len > 0) {
+        memcpy(out + header_len, body, body_len);
     }
-    return header_len + (int)payload_len;
+    return header_len + (int)body_len;
 }
 
-int nexus_core_pack_ack(uint32_t stream_id,
+int nexus_core_pack_receipt(uint32_t stream_id,
                         uint32_t seq_num,
-                        uint32_t ack_num,
-                        uint32_t ack_bits,
+                        uint32_t receipt_num,
+                        uint32_t receipt_bits,
                         uint8_t *out,
                         size_t out_len) {
-    return nexus_core_pack_frame(NEXUS_CORE_TYPE_ACK,
-                                 stream_id,
-                                 seq_num,
-                                 ack_num,
-                                 ack_bits,
-                                 0,
-                                 NULL,
-                                 0,
-                                 out,
-                                 out_len);
+    return nexus_core_pack_frame(NEXUS_CORE_KIND_RECEIPT,
+                                stream_id,
+                                seq_num,
+                                receipt_num,
+                                receipt_bits,
+                                0,
+                                NULL,
+                                0,
+                                out,
+                                out_len);
 }
 
-int nexus_core_pack_knock_response(const nexus_core_header *request, uint8_t *out, size_t out_len) {
+int nexus_core_pack_hello_reply(const nexus_core_header *request, uint8_t *out, size_t out_len) {
     if (!request) {
         return -1;
     }
-    return nexus_core_pack_frame(NEXUS_CORE_TYPE_KNOCK,
-                                 request->stream_id,
-                                 request->seq_num,
-                                 request->seq_num,
-                                 0,
-                                 request->path_id,
-                                 NULL,
-                                 0,
-                                 out,
-                                 out_len);
+    return nexus_core_pack_frame(NEXUS_CORE_KIND_HELLO,
+                                request->stream_id,
+                                request->seq_num,
+                                request->seq_num,
+                                0,
+                                request->path_id,
+                                NULL,
+                                0,
+                                out,
+                                out_len);
 }
 
 int nexus_core_chunk_encode(const nexus_core_chunk_header *header, uint8_t *out, size_t len) {
@@ -276,7 +276,7 @@ int nexus_core_chunk_decode(const uint8_t *data, size_t len, nexus_core_chunk_he
     return 0;
 }
 
-void nexus_core_ack_init(nexus_core_ack_window *window) {
+void nexus_core_receipt_init(nexus_core_receipt_window *window) {
     if (!window) {
         return;
     }
@@ -284,7 +284,7 @@ void nexus_core_ack_init(nexus_core_ack_window *window) {
     window->mask = 0;
 }
 
-void nexus_core_ack_observe(nexus_core_ack_window *window, uint32_t seq_num) {
+void nexus_core_receipt_observe(nexus_core_receipt_window *window, uint32_t seq_num) {
     if (!window || seq_num == 0) {
         return;
     }
@@ -306,10 +306,10 @@ void nexus_core_ack_observe(nexus_core_ack_window *window, uint32_t seq_num) {
     }
 }
 
-uint32_t nexus_core_ack_num(const nexus_core_ack_window *window) {
+uint32_t nexus_core_receipt_num(const nexus_core_receipt_window *window) {
     return window ? window->newest : 0;
 }
 
-uint32_t nexus_core_ack_bits(const nexus_core_ack_window *window) {
+uint32_t nexus_core_receipt_bits(const nexus_core_receipt_window *window) {
     return window ? window->mask : 0;
 }

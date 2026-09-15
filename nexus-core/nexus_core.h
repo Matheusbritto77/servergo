@@ -11,47 +11,47 @@ extern "C" {
 #define NEXUS_CORE_VERSION 1
 #define NEXUS_CORE_HEADER_LEN 32
 #define NEXUS_CORE_CHUNK_HEADER_LEN 12
-#define NEXUS_CORE_MAX_CHUNK_PAYLOAD 1180
+#define NEXUS_CORE_MAX_CHUNK_BODY 1180
 
-#define NEXUS_CORE_TYPE_KNOCK 0x01
-#define NEXUS_CORE_TYPE_SIGNAL 0x02
-#define NEXUS_CORE_TYPE_VIDEO 0x03
-#define NEXUS_CORE_TYPE_INPUT 0x04
-#define NEXUS_CORE_TYPE_KEEPALIVE 0x05
-#define NEXUS_CORE_TYPE_SYNC_KEYFRAME 0x06
-#define NEXUS_CORE_TYPE_ACK 0x07
-#define NEXUS_CORE_TYPE_NACK 0x08
-#define NEXUS_CORE_TYPE_PATH_CHALLENGE 0x09
-#define NEXUS_CORE_TYPE_PATH_RESPONSE 0x0A
+#define NEXUS_CORE_KIND_HELLO 0x01
+#define NEXUS_CORE_KIND_CONTROL 0x02
+#define NEXUS_CORE_KIND_MEDIA 0x03
+#define NEXUS_CORE_KIND_ACTION 0x04
+#define NEXUS_CORE_KIND_PULSE 0x05
+#define NEXUS_CORE_KIND_REFRESH 0x06
+#define NEXUS_CORE_KIND_RECEIPT 0x07
+#define NEXUS_CORE_KIND_GAP 0x08
+#define NEXUS_CORE_KIND_TRACE 0x09
+#define NEXUS_CORE_KIND_TRACE_REPLY 0x0A
 
-#define NEXUS_CORE_FLAG_ACK_ELICITING (1u << 0)
-#define NEXUS_CORE_FLAG_RELIABLE (1u << 1)
-#define NEXUS_CORE_FLAG_FRAGMENT (1u << 2)
-#define NEXUS_CORE_FLAG_KEYFRAME (1u << 3)
-#define NEXUS_CORE_FLAG_PROBE (1u << 4)
-#define NEXUS_CORE_FLAG_DIRECT_PATH (1u << 5)
+#define NEXUS_CORE_FLAG_RECEIPT_WANTED (1u << 0)
+#define NEXUS_CORE_FLAG_ORDERED (1u << 1)
+#define NEXUS_CORE_FLAG_PARTIAL (1u << 2)
+#define NEXUS_CORE_FLAG_ANCHOR (1u << 3)
+#define NEXUS_CORE_FLAG_TRACE (1u << 4)
+#define NEXUS_CORE_FLAG_DIRECT (1u << 5)
 
-#define NEXUS_CORE_CHANNEL_CONTROL 0
-#define NEXUS_CORE_CHANNEL_VIDEO 1
-#define NEXUS_CORE_CHANNEL_INPUT 2
-#define NEXUS_CORE_CHANNEL_PROBE 3
+#define NEXUS_CORE_LANE_COMMAND 0
+#define NEXUS_CORE_LANE_MEDIA 1
+#define NEXUS_CORE_LANE_ACTION 2
+#define NEXUS_CORE_LANE_TRACE 3
 
 #define NEXUS_CORE_ROUTE_DROP 0
-#define NEXUS_CORE_ROUTE_KNOCK_RESPONSE 1
+#define NEXUS_CORE_ROUTE_HELLO_REPLY 1
 #define NEXUS_CORE_ROUTE_RELAY 2
 
 typedef struct nexus_core_header {
     uint8_t version;
-    uint8_t frame_type;
+    uint8_t kind;
     uint16_t flags;
     uint8_t header_len;
-    uint8_t channel_id;
+    uint8_t lane_id;
     uint32_t stream_id;
     uint32_t seq_num;
-    uint32_t ack_num;
-    uint32_t ack_bits;
+    uint32_t receipt_num;
+    uint32_t receipt_bits;
     uint32_t timestamp_ms;
-    uint16_t payload_len;
+    uint16_t body_len;
     uint16_t path_id;
 } nexus_core_header;
 
@@ -62,45 +62,45 @@ typedef struct nexus_core_chunk_header {
     uint32_t frame_len;
 } nexus_core_chunk_header;
 
-typedef struct nexus_core_ack_window {
+typedef struct nexus_core_receipt_window {
     uint32_t newest;
     uint32_t mask;
-} nexus_core_ack_window;
+} nexus_core_receipt_window;
 
-uint8_t nexus_core_channel_for_type(uint8_t frame_type);
-uint16_t nexus_core_flags_for_type(uint8_t frame_type);
+uint8_t nexus_core_lane_for_kind(uint8_t kind);
+uint16_t nexus_core_flags_for_kind(uint8_t kind);
 uint32_t nexus_core_now_ms(void);
 uint32_t nexus_core_session_stream_id(const uint8_t *data, size_t len, int is_operator);
 uint32_t nexus_core_pair_stream_id(uint32_t stream_id);
-int nexus_core_route_action(uint8_t frame_type);
+int nexus_core_route_action(uint8_t kind);
 
 int nexus_core_decode(const uint8_t *data, size_t len, nexus_core_header *out);
 int nexus_core_encode(const nexus_core_header *header, uint8_t *out, size_t len);
-int nexus_core_pack_frame(uint8_t frame_type,
+int nexus_core_pack_frame(uint8_t kind,
                           uint32_t stream_id,
                           uint32_t seq_num,
-                          uint32_t ack_num,
-                          uint32_t ack_bits,
+                          uint32_t receipt_num,
+                          uint32_t receipt_bits,
                           uint16_t path_id,
-                          const uint8_t *payload,
-                          size_t payload_len,
+                          const uint8_t *body,
+                          size_t body_len,
                           uint8_t *out,
                           size_t out_len);
-int nexus_core_pack_ack(uint32_t stream_id,
+int nexus_core_pack_receipt(uint32_t stream_id,
                         uint32_t seq_num,
-                        uint32_t ack_num,
-                        uint32_t ack_bits,
+                        uint32_t receipt_num,
+                        uint32_t receipt_bits,
                         uint8_t *out,
                         size_t out_len);
-int nexus_core_pack_knock_response(const nexus_core_header *request, uint8_t *out, size_t out_len);
+int nexus_core_pack_hello_reply(const nexus_core_header *request, uint8_t *out, size_t out_len);
 
 int nexus_core_chunk_encode(const nexus_core_chunk_header *header, uint8_t *out, size_t len);
 int nexus_core_chunk_decode(const uint8_t *data, size_t len, nexus_core_chunk_header *out);
 
-void nexus_core_ack_init(nexus_core_ack_window *window);
-void nexus_core_ack_observe(nexus_core_ack_window *window, uint32_t seq_num);
-uint32_t nexus_core_ack_num(const nexus_core_ack_window *window);
-uint32_t nexus_core_ack_bits(const nexus_core_ack_window *window);
+void nexus_core_receipt_init(nexus_core_receipt_window *window);
+void nexus_core_receipt_observe(nexus_core_receipt_window *window, uint32_t seq_num);
+uint32_t nexus_core_receipt_num(const nexus_core_receipt_window *window);
+uint32_t nexus_core_receipt_bits(const nexus_core_receipt_window *window);
 
 #ifdef __cplusplus
 }

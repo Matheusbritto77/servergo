@@ -49,12 +49,12 @@ func (s *NexusRelayServer) Start() error {
 
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		return fmt.Errorf("nexus udp listen error: %w", err)
+		return fmt.Errorf("nexus carrier listen error: %w", err)
 	}
 	tuneNexusSocket(conn)
 	s.conn = conn
 
-	fmt.Printf("[NEXUS-P2P ENGINE] ⚡ Ultra-Low Latency Protocol Server Running on UDP 0.0.0.0:%d\n", s.port)
+	fmt.Printf("[NEXUS MESH] ⚡ Low-latency carrier listening on 0.0.0.0:%d\n", s.port)
 
 	go s.cleanupLoop()
 	go s.listenLoop()
@@ -79,7 +79,7 @@ func (s *NexusRelayServer) listenLoop() {
 			continue
 		}
 
-		// Register or Update Peer STUN/NAT Reflect Endpoint
+		// Register or update the broker-observed route endpoint.
 		s.peersMutex.Lock()
 		s.peerMap[uint32(hdr.stream_id)] = nexusPeer{
 			addr:     remoteAddr,
@@ -87,11 +87,11 @@ func (s *NexusRelayServer) listenLoop() {
 		}
 		s.peersMutex.Unlock()
 
-		switch C.nexus_core_route_action(hdr.frame_type) {
-		case C.NEXUS_CORE_ROUTE_KNOCK_RESPONSE:
-			// NAT Hole Punching Knock Probe - Echo back reflected endpoint
+		switch C.nexus_core_route_action(hdr.kind) {
+		case C.NEXUS_CORE_ROUTE_HELLO_REPLY:
+			// Reply with the broker-observed path so peers can converge on a route.
 			resp := make([]byte, int(C.NEXUS_CORE_HEADER_LEN))
-			respLen := C.nexus_core_pack_knock_response(
+			respLen := C.nexus_core_pack_hello_reply(
 				&hdr,
 				(*C.uint8_t)(unsafe.Pointer(&resp[0])),
 				C.size_t(len(resp)),
@@ -101,7 +101,7 @@ func (s *NexusRelayServer) listenLoop() {
 			}
 
 		case C.NEXUS_CORE_ROUTE_RELAY:
-			// Low-latency O(1) datagram forwarding to paired peer endpoint (StreamID ^ 1)
+			// Low-latency O(1) frame forwarding to the paired stream.
 			targetStreamID := uint32(C.nexus_core_pair_stream_id(hdr.stream_id))
 			s.peersMutex.RLock()
 			targetPeer, exists := s.peerMap[targetStreamID]
@@ -145,7 +145,7 @@ func tuneNexusSocket(conn *net.UDPConn) {
 func decodeNexusHeader(data []byte) (C.nexus_core_header, error) {
 	var hdr C.nexus_core_header
 	if len(data) == 0 {
-		return hdr, fmt.Errorf("empty nexus packet")
+		return hdr, fmt.Errorf("empty nexus frame")
 	}
 	rc := C.nexus_core_decode(
 		(*C.uint8_t)(unsafe.Pointer(&data[0])),
