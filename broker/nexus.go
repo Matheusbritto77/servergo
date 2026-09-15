@@ -16,6 +16,7 @@ const (
 	NexusTypeVideo  = 0x03
 	NexusTypeInput  = 0x04
 	NexusTypeKeep   = 0x05
+	NexusTypeKey    = 0x06
 )
 
 type NexusHeader struct {
@@ -111,7 +112,7 @@ func (s *NexusRelayServer) listenLoop() {
 			binary.BigEndian.PutUint32(respHdr[4:8], hdr.StreamID)
 			s.conn.WriteToUDP(respHdr, remoteAddr)
 
-		case NexusTypeVideo, NexusTypeInput, NexusTypeSignal:
+		case NexusTypeVideo, NexusTypeInput, NexusTypeSignal, NexusTypeKey:
 			// Low-latency datagram forwarding to paired peer endpoint
 			s.peersMutex.RLock()
 			for streamID, targetAddr := range s.peerMap {
