@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -19,8 +20,9 @@ import (
 const (
 	nexusPeerTTL         = 2 * time.Minute
 	nexusCleanupInterval = 30 * time.Second
-	nexusSocketBuffer    = 16 * 1024 * 1024
-	nexusDSCPLowLatency  = 0xb8 // Expedited Forwarding DSCP 46.
+	nexusSocketBuffer    = 32 * 1024 * 1024 // 32MB high-throughput socket buffer
+	nexusDSCPLowLatency  = 0xb8              // Expedited Forwarding DSCP 46
+	numShards            = 32
 )
 
 type nexusPeer struct {
@@ -28,18 +30,65 @@ type nexusPeer struct {
 	lastSeen time.Time
 }
 
+type peerShard struct {
+	sync.RWMutex
+	peers map[uint32]nexusPeer
+}
+
+type shardedPeerMap [numShards]peerShard
+
+func (m *shardedPeerMap) getShard(streamID uint32) *peerShard {
+	return &m[streamID%numShards]
+}
+
+func (m *shardedPeerMap) get(streamID uint32) (nexusPeer, bool) {
+	shard := m.getShard(streamID)
+	shard.RLock()
+	peer, exists := shard.peers[streamID]
+	shard.RUnlock()
+	return peer, exists
+}
+
+func (m *shardedPeerMap) put(streamID uint32, peer nexusPeer) (nexusPeer, bool) {
+	shard := m.getShard(streamID)
+	shard.Lock()
+	old, exists := shard.peers[streamID]
+	if shard.peers == nil {
+		shard.peers = make(map[uint32]nexusPeer)
+	}
+	shard.peers[streamID] = peer
+	shard.Unlock()
+	return old, exists
+}
+
+func (m *shardedPeerMap) delete(streamID uint32) {
+	shard := m.getShard(streamID)
+	shard.Lock()
+	delete(shard.peers, streamID)
+	shard.Unlock()
+}
+
+var packetBufferPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 64*1024) // 64 KB pool buffer
+		return &b
+	},
+}
+
 type NexusRelayServer struct {
-	port       int
-	conn       *net.UDPConn
-	peersMutex sync.RWMutex
-	peerMap    map[uint32]nexusPeer
+	port    int
+	conn    *net.UDPConn
+	peerMap shardedPeerMap
 }
 
 func NewNexusRelayServer(port int) *NexusRelayServer {
-	return &NexusRelayServer{
-		port:    port,
-		peerMap: make(map[uint32]nexusPeer),
+	server := &NexusRelayServer{
+		port: port,
 	}
+	for i := 0; i < numShards; i++ {
+		server.peerMap[i].peers = make(map[uint32]nexusPeer)
+	}
+	return server
 }
 
 func (s *NexusRelayServer) Start() error {
@@ -55,15 +104,24 @@ func (s *NexusRelayServer) Start() error {
 	tuneNexusSocket(conn)
 	s.conn = conn
 
-	fmt.Printf("[NEXUS MESH] ⚡ Low-latency carrier listening on 0.0.0.0:%d\n", s.port)
+	workers := runtime.NumCPU() * 2
+	if workers < 4 {
+		workers = 4
+	}
+
+	fmt.Printf("[NEXUS MESH] ⚡ Multi-Core Low-Latency Relay (Workers: %d, Shards: 32) listening on 0.0.0.0:%d\n", workers, s.port)
 
 	go s.cleanupLoop()
-	go s.listenLoop()
+	for i := 0; i < workers; i++ {
+		go s.listenWorker()
+	}
 	return nil
 }
 
-func (s *NexusRelayServer) listenLoop() {
-	buf := make([]byte, 512*1024) // 512 KB zero-alloc frame buffer
+func (s *NexusRelayServer) listenWorker() {
+	bufPtr := packetBufferPool.Get().(*[]byte)
+	defer packetBufferPool.Put(bufPtr)
+	buf := *bufPtr
 
 	for {
 		n, remoteAddr, err := s.conn.ReadFromUDP(buf)
@@ -80,17 +138,15 @@ func (s *NexusRelayServer) listenLoop() {
 			continue
 		}
 
-		// Register or update the broker-observed route endpoint (Zero-Disconnection IP Roaming).
-		s.peersMutex.Lock()
-		oldPeer, exists := s.peerMap[uint32(hdr.stream_id)]
+		// Sharded Zero-Contention Peer Registration & IP Roaming
+		oldPeer, exists := s.peerMap.put(uint32(hdr.stream_id), nexusPeer{
+			addr:     remoteAddr,
+			lastSeen: time.Now(),
+		})
+
 		if exists && oldPeer.addr != nil && oldPeer.addr.String() != remoteAddr.String() {
 			fmt.Printf("[NEXUS ROAMING] 🔄 Dynamic IP Roaming detected for stream_id 0x%x -> %s\n", hdr.stream_id, remoteAddr)
 		}
-		s.peerMap[uint32(hdr.stream_id)] = nexusPeer{
-			addr:     remoteAddr,
-			lastSeen: time.Now(),
-		}
-		s.peersMutex.Unlock()
 
 		if hdr.kind == C.NEXUS_CORE_KIND_TRACE {
 			// STUN-like reflexive endpoint discovery: return client's public IP & Port.
@@ -127,11 +183,9 @@ func (s *NexusRelayServer) listenLoop() {
 			}
 
 		case C.NEXUS_CORE_ROUTE_RELAY:
-			// Low-latency O(1) frame forwarding to the paired stream.
+			// Sharded O(1) frame forwarding to the paired stream.
 			targetStreamID := uint32(C.nexus_core_pair_stream_id(hdr.stream_id))
-			s.peersMutex.RLock()
-			targetPeer, exists := s.peerMap[targetStreamID]
-			s.peersMutex.RUnlock()
+			targetPeer, exists := s.peerMap.get(targetStreamID)
 			if exists && targetPeer.addr != nil {
 				_, _ = s.conn.WriteToUDP(buf[:n], targetPeer.addr)
 			}
@@ -145,27 +199,28 @@ func (s *NexusRelayServer) cleanupLoop() {
 
 	for range ticker.C {
 		cutoff := time.Now().Add(-nexusPeerTTL)
-		s.peersMutex.Lock()
-		for streamID, peer := range s.peerMap {
-			if peer.lastSeen.Before(cutoff) {
-				delete(s.peerMap, streamID)
+		for i := 0; i < numShards; i++ {
+			shard := &s.peerMap[i]
+			shard.Lock()
+			for streamID, peer := range shard.peers {
+				if peer.lastSeen.Before(cutoff) {
+					delete(shard.peers, streamID)
+				}
 			}
+			shard.Unlock()
 		}
-		s.peersMutex.Unlock()
 	}
 }
 
-// RegisterPeer pre-registers or updates a stream_id -> UDP address route in the peer map.
+// RegisterPeer pre-registers or updates a stream_id -> UDP address route in the sharded peer map.
 func (s *NexusRelayServer) RegisterPeer(streamID uint32, addr *net.UDPAddr) {
 	if addr == nil {
 		return
 	}
-	s.peersMutex.Lock()
-	defer s.peersMutex.Unlock()
-	s.peerMap[streamID] = nexusPeer{
+	s.peerMap.put(streamID, nexusPeer{
 		addr:     addr,
 		lastSeen: time.Now(),
-	}
+	})
 }
 
 // SendToStream sends a raw Nexus frame to the peer registered under the given stream_id.
@@ -174,9 +229,7 @@ func (s *NexusRelayServer) SendToStream(streamID uint32, data []byte) bool {
 	if s.conn == nil || len(data) == 0 {
 		return false
 	}
-	s.peersMutex.RLock()
-	peer, exists := s.peerMap[streamID]
-	s.peersMutex.RUnlock()
+	peer, exists := s.peerMap.get(streamID)
 	if !exists || peer.addr == nil {
 		return false
 	}

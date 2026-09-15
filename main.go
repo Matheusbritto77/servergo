@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 )
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	log.Printf("⚡ High-Performance Core Initialized: GOMAXPROCS = %d", runtime.NumCPU())
 	rawGrpcPort := os.Getenv("GRPC_PORT")
 	if rawGrpcPort == "" {
 		rawGrpcPort = "50051"
