@@ -205,10 +205,17 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 				C.size_t(len(frame)),
 			)
 			if frameLen > 0 {
-				if b.nexusRelay.SendToStream(hostStreamID, frame[:int(frameLen)]) {
-					log.Printf("🔔 [BROKER] ConnectRequest dispatched to Client ID '%s' via Nexus Control frame", client.ClientID)
-				} else {
-					log.Printf("⚠️ [BROKER] Host '%s' not reachable via Nexus relay (no UDP route registered)", client.ClientID)
+				sent := false
+				for attempt := 0; attempt < 10; attempt++ {
+					if b.nexusRelay.SendToStream(hostStreamID, frame[:int(frameLen)]) {
+						log.Printf("🔔 [BROKER] ConnectRequest dispatched to Client ID '%s' via Nexus Control frame (attempt %d)", client.ClientID, attempt+1)
+						sent = true
+						break
+					}
+					time.Sleep(200 * time.Millisecond)
+				}
+				if !sent {
+					log.Printf("⚠️ [BROKER] Host '%s' not reachable via Nexus relay after 2s (no UDP route registered)", client.ClientID)
 				}
 			}
 		}
