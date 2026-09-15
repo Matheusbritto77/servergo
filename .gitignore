@@ -1,0 +1,10 @@
+servergo
+server-web
+*.exe
+*.exe.stackdump
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+.DS_Store
