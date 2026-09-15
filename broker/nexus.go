@@ -68,6 +68,8 @@ func (s *NexusRelayServer) Start() error {
 	if err != nil {
 		return fmt.Errorf("nexus udp listen error: %w", err)
 	}
+	_ = conn.SetReadBuffer(4 * 1024 * 1024)
+	_ = conn.SetWriteBuffer(4 * 1024 * 1024)
 	s.conn = conn
 
 	fmt.Printf("[NEXUS-P2P ENGINE] ⚡ Ultra-Low Latency Protocol Server Running on UDP 0.0.0.0:%d\n", s.port)
