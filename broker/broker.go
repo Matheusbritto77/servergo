@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	pb "server-web/proto/remotedesktop"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -20,6 +22,7 @@ type ActiveClient struct {
 	ClientID     string
 	MachineName  string
 	OSInfo       string
+	RemoteIP     string
 	RegisteredAt time.Time
 
 	HostControlChan chan *pb.ControlMessage
@@ -121,17 +124,28 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 
 	clientID := b.generateUniqueID()
 
+	var remoteIP string
+	if pr, ok := peer.FromContext(ctx); ok && pr.Addr != nil {
+		host, _, err := net.SplitHostPort(pr.Addr.String())
+		if err == nil {
+			remoteIP = host
+		} else {
+			remoteIP = pr.Addr.String()
+		}
+	}
+
 	client := &ActiveClient{
 		ClientID:        clientID,
 		MachineName:     req.GetMachineName(),
 		OSInfo:          req.GetOsInfo(),
+		RemoteIP:        remoteIP,
 		RegisteredAt:    time.Now(),
 		HostControlChan: make(chan *pb.ControlMessage, 512),
 		subscribers:     make(map[string]chan *pb.HostMessage),
 	}
 
 	b.clients[clientID] = client
-	log.Printf("⚡ [SERVER ID GENERATOR] Generated & Registered Client ID: %s for host (%s - %s)", clientID, req.GetMachineName(), req.GetOsInfo())
+	log.Printf("⚡ [SERVER ID GENERATOR] Generated & Registered Client ID: %s for host (%s - %s - IP: %s)", clientID, req.GetMachineName(), req.GetOsInfo(), remoteIP)
 
 	return &pb.RegisterResponse{
 		Success:      true,
@@ -151,7 +165,8 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	}
 
 	sessionID := fmt.Sprintf("sess_%s_%d", client.ClientID, time.Now().UnixNano())
-	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), client.ClientID, sessionID)
+	p2pEndpoint := fmt.Sprintf("%s:50052", client.RemoteIP)
+	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (IP: %s - P2P Target: %s)", req.GetOperatorName(), client.ClientID, client.RemoteIP, p2pEndpoint)
 
 	// Send CONNECT_REQUEST command to host agent
 	select {
@@ -170,8 +185,9 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	}
 
 	return &pb.AuthResponse{
-		Success:   true,
-		SessionId: sessionID,
+		Success:     true,
+		SessionId:   sessionID,
+		P2PEndpoint: p2pEndpoint,
 	}, nil
 }
 
