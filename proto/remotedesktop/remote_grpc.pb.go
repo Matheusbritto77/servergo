@@ -23,6 +23,7 @@ const (
 	RemoteDesktop_AuthenticateControl_FullMethodName = "/remotedesktop.RemoteDesktop/AuthenticateControl"
 	RemoteDesktop_HostStream_FullMethodName          = "/remotedesktop.RemoteDesktop/HostStream"
 	RemoteDesktop_ControlStream_FullMethodName       = "/remotedesktop.RemoteDesktop/ControlStream"
+	RemoteDesktop_CheckUpdate_FullMethodName         = "/remotedesktop.RemoteDesktop/CheckUpdate"
 )
 
 // RemoteDesktopClient is the client API for RemoteDesktop service.
@@ -33,10 +34,12 @@ type RemoteDesktopClient interface {
 	RegisterClient(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
-	// Stream channel for Host Agent (Client): Host sends HostMessage (frames), receives ControlMessage (input)
+	// Stream channel for Host Agent (Client)
 	HostStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_HostStreamClient, error)
-	// Stream channel for Control Viewer: Control sends ControlMessage (input), receives HostMessage (frames)
+	// Stream channel for Control Viewer
 	ControlStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlStreamClient, error)
+	// Auto-Update service check
+	CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error)
 }
 
 type remoteDesktopClient struct {
@@ -127,6 +130,15 @@ func (x *remoteDesktopControlStreamClient) Recv() (*HostMessage, error) {
 	return m, nil
 }
 
+func (c *remoteDesktopClient) CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error) {
+	out := new(UpdateCheckResponse)
+	err := c.cc.Invoke(ctx, RemoteDesktop_CheckUpdate_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RemoteDesktopServer is the server API for RemoteDesktop service.
 // All implementations must embed UnimplementedRemoteDesktopServer
 // for forward compatibility
@@ -135,10 +147,12 @@ type RemoteDesktopServer interface {
 	RegisterClient(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
-	// Stream channel for Host Agent (Client): Host sends HostMessage (frames), receives ControlMessage (input)
+	// Stream channel for Host Agent (Client)
 	HostStream(RemoteDesktop_HostStreamServer) error
-	// Stream channel for Control Viewer: Control sends ControlMessage (input), receives HostMessage (frames)
+	// Stream channel for Control Viewer
 	ControlStream(RemoteDesktop_ControlStreamServer) error
+	// Auto-Update service check
+	CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error)
 	mustEmbedUnimplementedRemoteDesktopServer()
 }
 
@@ -157,6 +171,9 @@ func (UnimplementedRemoteDesktopServer) HostStream(RemoteDesktop_HostStreamServe
 }
 func (UnimplementedRemoteDesktopServer) ControlStream(RemoteDesktop_ControlStreamServer) error {
 	return status.Errorf(codes.Unimplemented, "method ControlStream not implemented")
+}
+func (UnimplementedRemoteDesktopServer) CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CheckUpdate not implemented")
 }
 func (UnimplementedRemoteDesktopServer) mustEmbedUnimplementedRemoteDesktopServer() {}
 
@@ -259,6 +276,24 @@ func (x *remoteDesktopControlStreamServer) Recv() (*ControlMessage, error) {
 	return m, nil
 }
 
+func _RemoteDesktop_CheckUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RemoteDesktopServer).CheckUpdate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RemoteDesktop_CheckUpdate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RemoteDesktopServer).CheckUpdate(ctx, req.(*UpdateCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RemoteDesktop_ServiceDesc is the grpc.ServiceDesc for RemoteDesktop service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -273,6 +308,10 @@ var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AuthenticateControl",
 			Handler:    _RemoteDesktop_AuthenticateControl_Handler,
+		},
+		{
+			MethodName: "CheckUpdate",
+			Handler:    _RemoteDesktop_CheckUpdate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -21,12 +21,9 @@ type ActiveClient struct {
 	OSInfo       string
 	RegisteredAt time.Time
 
-	// Channel to send ControlMessages (input events) to the host
 	HostControlChan chan *pb.ControlMessage
-
-	// Subscribers (Control Viewers) receiving HostMessages (video frames)
-	mu          sync.RWMutex
-	subscribers map[string]chan *pb.HostMessage
+	mu              sync.RWMutex
+	subscribers     map[string]chan *pb.HostMessage
 }
 
 type Broker struct {
@@ -44,7 +41,6 @@ func NewBroker() *Broker {
 	}
 }
 
-// Generate unique 9-digit Client ID (Format: XXX-XXX-XXX)
 func (b *Broker) generateUniqueID() string {
 	for {
 		id := fmt.Sprintf("%03d-%03d-%03d", b.rnd.Intn(900)+100, b.rnd.Intn(900)+100, b.rnd.Intn(900)+100)
@@ -83,11 +79,28 @@ func (b *Broker) ListClients() []ClientInfo {
 	return list
 }
 
+func (b *Broker) CheckUpdate(ctx context.Context, req *pb.UpdateCheckRequest) (*pb.UpdateCheckResponse, error) {
+	latestVersion := "0.1.0"
+	downloadURL := fmt.Sprintf("http://209.126.81.68:8080/downloads/remote-%s", req.GetComponent())
+	if req.GetOsTarget() == "windows" {
+		downloadURL += ".exe"
+	}
+
+	updateAvailable := req.GetCurrentVersion() != "" && req.GetCurrentVersion() != latestVersion
+
+	log.Printf("🔄 [AUTO-UPDATE CHECK] Component: %s (%s), Client Version: %s, Server Version: %s", req.GetComponent(), req.GetOsTarget(), req.GetCurrentVersion(), latestVersion)
+
+	return &pb.UpdateCheckResponse{
+		UpdateAvailable: updateAvailable,
+		LatestVersion:   latestVersion,
+		DownloadUrl:     downloadURL,
+	}, nil
+}
+
 func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Server generates unique 9-digit Client ID
 	clientID := b.generateUniqueID()
 
 	client := &ActiveClient{

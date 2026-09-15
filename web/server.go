@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"server-web/broker"
 )
 
@@ -18,7 +19,14 @@ func NewWebServer(b *broker.Broker) *WebServer {
 func (ws *WebServer) Start(addr string) error {
 	mux := http.NewServeMux()
 
+	// Static downloads directory for Client and Control binaries
+	downloadsDir := "./downloads"
+	_ = os.MkdirAll(downloadsDir, 0755)
+	fileServer := http.FileServer(http.Dir(downloadsDir))
+	mux.Handle("/downloads/", http.StripPrefix("/downloads/", fileServer))
+
 	mux.HandleFunc("/api/clients", ws.handleAPIClients)
+	mux.HandleFunc("/api/update/check", ws.handleUpdateCheck)
 	mux.HandleFunc("/", ws.handleDashboard)
 
 	return http.ListenAndServe(addr, mux)
@@ -30,6 +38,28 @@ func (ws *WebServer) handleAPIClients(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"clients": clients,
 		"count":   len(clients),
+	})
+}
+
+func (ws *WebServer) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	component := r.URL.Query().Get("component")
+	currentVersion := r.URL.Query().Get("version")
+
+	latestVersion := "0.1.0"
+	updateAvailable := currentVersion != "" && currentVersion != latestVersion
+
+	ext := ""
+	if r.URL.Query().Get("os") == "windows" {
+		ext = ".exe"
+	}
+
+	downloadURL := fmt.Sprintf("http://209.126.81.68:8080/downloads/remote-%s%s", component, ext)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"update_available": updateAvailable,
+		"latest_version":   latestVersion,
+		"download_url":     downloadURL,
 	})
 }
 
@@ -76,7 +106,7 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
     <div class="container">
         <header>
             <div class="logo">⚡ Remote Desktop Broker</div>
-            <div class="badge">gRPC: :50051 | Web: :8080</div>
+            <div class="badge">gRPC: :50051 | Web: :8080 | Auto-Updater Ready</div>
         </header>
 
         <div class="grid">
@@ -86,8 +116,8 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
             </div>
             <div class="card">
                 <div class="card-title">System Status</div>
-                <div style="margin-top: 0.5rem; font-weight: 600; color: var(--success);">● Broker Operational</div>
-                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.4rem;">Ready for incoming client hosts & control sessions</div>
+                <div style="margin-top: 0.5rem; font-weight: 600; color: var(--success);">● Broker & Auto-Updater Active</div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.4rem;">Serving client and control binaries</div>
             </div>
         </div>
 
@@ -119,7 +149,7 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
                 
                 const tbody = document.getElementById('clients-body');
                 if (!data.clients || data.clients.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No client hosts currently registered. Start <code>client</code> on a Windows machine.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No client hosts currently registered. Start <code>remote-client.exe</code> on a Windows machine.</td></tr>';
                     return;
                 }
                 
