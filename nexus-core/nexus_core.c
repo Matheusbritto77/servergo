@@ -1,6 +1,11 @@
 #include "nexus_core.h"
 #include <string.h>
-#include <time.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <sys/time.h>
+#endif
 
 static uint16_t be16(const uint8_t *p) {
     return ((uint16_t)p[0] << 8) | (uint16_t)p[1];
@@ -61,7 +66,15 @@ uint16_t nexus_core_flags_for_type(uint8_t frame_type) {
 }
 
 uint32_t nexus_core_now_ms(void) {
-    return (uint32_t)((uint64_t)time(NULL) * 1000u);
+#if defined(_WIN32)
+    return (uint32_t)GetTickCount64();
+#else
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) {
+        return 0;
+    }
+    return (uint32_t)(((uint64_t)tv.tv_sec * 1000u) + ((uint64_t)tv.tv_usec / 1000u));
+#endif
 }
 
 uint32_t nexus_core_session_stream_id(const uint8_t *data, size_t len, int is_operator) {

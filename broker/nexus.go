@@ -10,20 +10,34 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"syscall"
+	"time"
 	"unsafe"
 )
+
+const (
+	nexusPeerTTL         = 2 * time.Minute
+	nexusCleanupInterval = 30 * time.Second
+	nexusSocketBuffer    = 16 * 1024 * 1024
+	nexusDSCPLowLatency  = 0xb8 // Expedited Forwarding DSCP 46.
+)
+
+type nexusPeer struct {
+	addr     *net.UDPAddr
+	lastSeen time.Time
+}
 
 type NexusRelayServer struct {
 	port       int
 	conn       *net.UDPConn
 	peersMutex sync.RWMutex
-	peerMap    map[uint32]*net.UDPAddr
+	peerMap    map[uint32]nexusPeer
 }
 
 func NewNexusRelayServer(port int) *NexusRelayServer {
 	return &NexusRelayServer{
 		port:    port,
-		peerMap: make(map[uint32]*net.UDPAddr),
+		peerMap: make(map[uint32]nexusPeer),
 	}
 }
 
@@ -37,12 +51,12 @@ func (s *NexusRelayServer) Start() error {
 	if err != nil {
 		return fmt.Errorf("nexus udp listen error: %w", err)
 	}
-	_ = conn.SetReadBuffer(4 * 1024 * 1024)
-	_ = conn.SetWriteBuffer(4 * 1024 * 1024)
+	tuneNexusSocket(conn)
 	s.conn = conn
 
 	fmt.Printf("[NEXUS-P2P ENGINE] ⚡ Ultra-Low Latency Protocol Server Running on UDP 0.0.0.0:%d\n", s.port)
 
+	go s.cleanupLoop()
 	go s.listenLoop()
 	return nil
 }
@@ -67,7 +81,10 @@ func (s *NexusRelayServer) listenLoop() {
 
 		// Register or Update Peer STUN/NAT Reflect Endpoint
 		s.peersMutex.Lock()
-		s.peerMap[uint32(hdr.stream_id)] = remoteAddr
+		s.peerMap[uint32(hdr.stream_id)] = nexusPeer{
+			addr:     remoteAddr,
+			lastSeen: time.Now(),
+		}
 		s.peersMutex.Unlock()
 
 		switch hdr.frame_type {
@@ -97,13 +114,42 @@ func (s *NexusRelayServer) listenLoop() {
 			// Low-latency O(1) datagram forwarding to paired peer endpoint (StreamID ^ 1)
 			targetStreamID := uint32(hdr.stream_id) ^ 1
 			s.peersMutex.RLock()
-			targetAddr, exists := s.peerMap[targetStreamID]
+			targetPeer, exists := s.peerMap[targetStreamID]
 			s.peersMutex.RUnlock()
-			if exists && targetAddr != nil {
-				_, _ = s.conn.WriteToUDP(buf[:n], targetAddr)
+			if exists && targetPeer.addr != nil {
+				_, _ = s.conn.WriteToUDP(buf[:n], targetPeer.addr)
 			}
 		}
 	}
+}
+
+func (s *NexusRelayServer) cleanupLoop() {
+	ticker := time.NewTicker(nexusCleanupInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cutoff := time.Now().Add(-nexusPeerTTL)
+		s.peersMutex.Lock()
+		for streamID, peer := range s.peerMap {
+			if peer.lastSeen.Before(cutoff) {
+				delete(s.peerMap, streamID)
+			}
+		}
+		s.peersMutex.Unlock()
+	}
+}
+
+func tuneNexusSocket(conn *net.UDPConn) {
+	_ = conn.SetReadBuffer(nexusSocketBuffer)
+	_ = conn.SetWriteBuffer(nexusSocketBuffer)
+
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return
+	}
+	_ = rawConn.Control(func(fd uintptr) {
+		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_TOS, nexusDSCPLowLatency)
+	})
 }
 
 func decodeNexusHeader(data []byte) (C.nexus_core_header, error) {
