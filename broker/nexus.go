@@ -1,49 +1,17 @@
 package broker
 
+/*
+#cgo CFLAGS: -I../nexus-core
+#include "nexus_core.h"
+*/
+import "C"
+
 import (
-	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
+	"unsafe"
 )
-
-const (
-	NexusMagic      = "NX"
-	NexusVersion    = 0x01
-	NexusHeaderLen  = 16
-	NexusTypeKnock  = 0x01
-	NexusTypeSignal = 0x02
-	NexusTypeVideo  = 0x03
-	NexusTypeInput  = 0x04
-	NexusTypeKeep   = 0x05
-	NexusTypeKey    = 0x06
-)
-
-type NexusHeader struct {
-	Magic      [2]byte
-	Version    uint8
-	FrameType  uint8
-	StreamID   uint32
-	SeqNum     uint32
-	PayloadLen uint32
-}
-
-func DecodeNexusHeader(data []byte) (*NexusHeader, error) {
-	if len(data) < NexusHeaderLen {
-		return nil, fmt.Errorf("header too short")
-	}
-	if data[0] != 'N' || data[1] != 'X' {
-		return nil, fmt.Errorf("invalid magic signature")
-	}
-	return &NexusHeader{
-		Magic:      [2]byte{data[0], data[1]},
-		Version:    data[2],
-		FrameType:  data[3],
-		StreamID:   binary.BigEndian.Uint32(data[4:8]),
-		SeqNum:     binary.BigEndian.Uint32(data[8:12]),
-		PayloadLen: binary.BigEndian.Uint32(data[12:16]),
-	}, nil
-}
 
 type NexusRelayServer struct {
 	port       int
@@ -88,39 +56,68 @@ func (s *NexusRelayServer) listenLoop() {
 			break
 		}
 
-		if n < NexusHeaderLen {
+		if n < int(C.NEXUS_CORE_HEADER_LEN) {
 			continue
 		}
 
-		hdr, err := DecodeNexusHeader(buf[:n])
+		hdr, err := decodeNexusHeader(buf[:n])
 		if err != nil {
 			continue
 		}
 
 		// Register or Update Peer STUN/NAT Reflect Endpoint
 		s.peersMutex.Lock()
-		s.peerMap[hdr.StreamID] = remoteAddr
+		s.peerMap[uint32(hdr.stream_id)] = remoteAddr
 		s.peersMutex.Unlock()
 
-		switch hdr.FrameType {
-		case NexusTypeKnock:
+		switch hdr.frame_type {
+		case C.NEXUS_CORE_TYPE_KNOCK:
 			// NAT Hole Punching Knock Probe - Echo back reflected endpoint
-			respHdr := make([]byte, NexusHeaderLen)
-			respHdr[0], respHdr[1] = 'N', 'X'
-			respHdr[2] = NexusVersion
-			respHdr[3] = NexusTypeKnock
-			binary.BigEndian.PutUint32(respHdr[4:8], hdr.StreamID)
-			s.conn.WriteToUDP(respHdr, remoteAddr)
+			resp := make([]byte, int(C.NEXUS_CORE_HEADER_LEN))
+			respLen := C.nexus_core_pack_frame(
+				C.NEXUS_CORE_TYPE_KNOCK,
+				hdr.stream_id,
+				hdr.seq_num,
+				hdr.seq_num,
+				0,
+				0,
+				nil,
+				0,
+				(*C.uint8_t)(unsafe.Pointer(&resp[0])),
+				C.size_t(len(resp)),
+			)
+			if respLen > 0 {
+				_, _ = s.conn.WriteToUDP(resp[:int(respLen)], remoteAddr)
+			}
 
-		case NexusTypeVideo, NexusTypeInput, NexusTypeSignal, NexusTypeKey:
+		case C.NEXUS_CORE_TYPE_VIDEO, C.NEXUS_CORE_TYPE_INPUT, C.NEXUS_CORE_TYPE_SIGNAL,
+			C.NEXUS_CORE_TYPE_SYNC_KEYFRAME, C.NEXUS_CORE_TYPE_KEEPALIVE,
+			C.NEXUS_CORE_TYPE_ACK, C.NEXUS_CORE_TYPE_NACK,
+			C.NEXUS_CORE_TYPE_PATH_CHALLENGE, C.NEXUS_CORE_TYPE_PATH_RESPONSE:
 			// Low-latency O(1) datagram forwarding to paired peer endpoint (StreamID ^ 1)
-			targetStreamID := hdr.StreamID ^ 1
+			targetStreamID := uint32(hdr.stream_id) ^ 1
 			s.peersMutex.RLock()
 			targetAddr, exists := s.peerMap[targetStreamID]
 			s.peersMutex.RUnlock()
 			if exists && targetAddr != nil {
-				s.conn.WriteToUDP(buf[:n], targetAddr)
+				_, _ = s.conn.WriteToUDP(buf[:n], targetAddr)
 			}
 		}
 	}
+}
+
+func decodeNexusHeader(data []byte) (C.nexus_core_header, error) {
+	var hdr C.nexus_core_header
+	if len(data) == 0 {
+		return hdr, fmt.Errorf("empty nexus packet")
+	}
+	rc := C.nexus_core_decode(
+		(*C.uint8_t)(unsafe.Pointer(&data[0])),
+		C.size_t(len(data)),
+		&hdr,
+	)
+	if rc != 0 {
+		return hdr, fmt.Errorf("nexus decode failed: %d", int(rc))
+	}
+	return hdr, nil
 }
