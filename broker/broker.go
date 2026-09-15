@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -19,10 +20,10 @@ type ActiveClient struct {
 	MachineName  string
 	OSInfo       string
 	RegisteredAt time.Time
-	
+
 	// Channel to send ControlMessages (input events) to the host
 	HostControlChan chan *pb.ControlMessage
-	
+
 	// Subscribers (Control Viewers) receiving HostMessages (video frames)
 	mu          sync.RWMutex
 	subscribers map[string]chan *pb.HostMessage
@@ -30,14 +31,26 @@ type ActiveClient struct {
 
 type Broker struct {
 	pb.UnimplementedRemoteDesktopServer
-	
+
 	mu      sync.RWMutex
 	clients map[string]*ActiveClient
+	rnd     *rand.Rand
 }
 
 func NewBroker() *Broker {
 	return &Broker{
 		clients: make(map[string]*ActiveClient),
+		rnd:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+}
+
+// Generate unique 9-digit Client ID (Format: XXX-XXX-XXX)
+func (b *Broker) generateUniqueID() string {
+	for {
+		id := fmt.Sprintf("%03d-%03d-%03d", b.rnd.Intn(900)+100, b.rnd.Intn(900)+100, b.rnd.Intn(900)+100)
+		if _, exists := b.clients[id]; !exists {
+			return id
+		}
 	}
 }
 
@@ -71,18 +84,14 @@ func (b *Broker) ListClients() []ClientInfo {
 }
 
 func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	if req.GetClientId() == "" {
-		return &pb.RegisterResponse{
-			Success:      false,
-			ErrorMessage: "Client ID is required",
-		}, nil
-	}
-
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// Server generates unique 9-digit Client ID
+	clientID := b.generateUniqueID()
+
 	client := &ActiveClient{
-		ClientID:        req.GetClientId(),
+		ClientID:        clientID,
 		MachineName:     req.GetMachineName(),
 		OSInfo:          req.GetOsInfo(),
 		RegisteredAt:    time.Now(),
@@ -90,12 +99,13 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 		subscribers:     make(map[string]chan *pb.HostMessage),
 	}
 
-	b.clients[req.GetClientId()] = client
-	log.Printf("[BROKER] Registered host client by Unique ID: %s (%s - %s)", req.GetClientId(), req.GetMachineName(), req.GetOsInfo())
+	b.clients[clientID] = client
+	log.Printf("⚡ [SERVER ID GENERATOR] Generated & Registered Client ID: %s for host (%s - %s)", clientID, req.GetMachineName(), req.GetOsInfo())
 
 	return &pb.RegisterResponse{
 		Success:      true,
-		SessionToken: fmt.Sprintf("tok_%s_%d", req.GetClientId(), time.Now().Unix()),
+		ClientId:     clientID,
+		SessionToken: fmt.Sprintf("tok_%s_%d", clientID, time.Now().Unix()),
 	}, nil
 }
 
@@ -112,7 +122,7 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	}
 
 	sessionID := fmt.Sprintf("sess_%s_%d", req.GetTargetClientId(), time.Now().UnixNano())
-	log.Printf("[BROKER] Direct connection established from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), req.GetTargetClientId(), sessionID)
+	log.Printf("🔗 [BROKER] Direct connection established from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), req.GetTargetClientId(), sessionID)
 
 	return &pb.AuthResponse{
 		Success:   true,

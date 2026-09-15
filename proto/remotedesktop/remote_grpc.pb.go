@@ -29,7 +29,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RemoteDesktopClient interface {
-	// Register client agent host
+	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
@@ -131,7 +131,7 @@ func (x *remoteDesktopControlStreamClient) Recv() (*HostMessage, error) {
 // All implementations must embed UnimplementedRemoteDesktopServer
 // for forward compatibility
 type RemoteDesktopServer interface {
-	// Register client agent host
+	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
