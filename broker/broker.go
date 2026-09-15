@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,23 @@ func NewBroker() *Broker {
 		clients: make(map[string]*ActiveClient),
 		rnd:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
+}
+
+func normalizeID(id string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(id, "-", ""), " ", "")
+}
+
+func (b *Broker) findClient(rawID string) (*ActiveClient, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	cleanTarget := normalizeID(rawID)
+	for _, c := range b.clients {
+		if normalizeID(c.ClientID) == cleanTarget {
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 func (b *Broker) generateUniqueID() string {
@@ -123,9 +141,7 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 }
 
 func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (*pb.AuthResponse, error) {
-	b.mu.RLock()
-	client, exists := b.clients[req.GetTargetClientId()]
-	b.mu.RUnlock()
+	client, exists := b.findClient(req.GetTargetClientId())
 
 	if !exists || client == nil {
 		return &pb.AuthResponse{
@@ -134,8 +150,24 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 		}, nil
 	}
 
-	sessionID := fmt.Sprintf("sess_%s_%d", req.GetTargetClientId(), time.Now().UnixNano())
-	log.Printf("🔗 [BROKER] Direct connection established from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), req.GetTargetClientId(), sessionID)
+	sessionID := fmt.Sprintf("sess_%s_%d", client.ClientID, time.Now().UnixNano())
+	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), client.ClientID, sessionID)
+
+	// Send CONNECT_REQUEST command to host agent
+	select {
+	case client.HostControlChan <- &pb.ControlMessage{
+		SessionId: sessionID,
+		Payload: &pb.ControlMessage_Command{
+			Command: &pb.ControlCommand{
+				Type:   pb.CommandType_CONNECT_REQUEST,
+				Detail: req.GetOperatorName(),
+			},
+		},
+	}:
+		log.Printf("🔔 [BROKER] Connection request dispatched to Client ID '%s'", client.ClientID)
+	default:
+		log.Printf("⚠️ [BROKER] Could not deliver connection request to Client ID '%s' (buffer full)", client.ClientID)
+	}
 
 	return &pb.AuthResponse{
 		Success:   true,
@@ -152,15 +184,13 @@ func (b *Broker) HostStream(stream pb.RemoteDesktop_HostStreamServer) error {
 	}
 
 	clientID := firstMsg.GetSessionId()
-	b.mu.RLock()
-	client, exists := b.clients[clientID]
-	b.mu.RUnlock()
+	client, exists := b.findClient(clientID)
 
 	if !exists {
 		return status.Errorf(codes.NotFound, "Client ID %s not registered", clientID)
 	}
 
-	log.Printf("[BROKER] HostStream connected for Client ID: %s", clientID)
+	log.Printf("[BROKER] HostStream connected for Client ID: %s", client.ClientID)
 
 	errChan := make(chan error, 2)
 	go func() {
@@ -228,9 +258,7 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 	}
 
 	clientID := firstMsg.GetSessionId()
-	b.mu.RLock()
-	client, exists := b.clients[clientID]
-	b.mu.RUnlock()
+	client, exists := b.findClient(clientID)
 
 	if !exists {
 		return status.Errorf(codes.NotFound, "Target Client ID %s not registered", clientID)
