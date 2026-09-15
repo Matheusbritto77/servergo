@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"os"
+	"strings"
 
 	"server-web/broker"
 	pb "server-web/proto/remotedesktop"
@@ -13,21 +15,19 @@ import (
 )
 
 func main() {
-	grpcPort := os.Getenv("GRPC_PORT")
-	if grpcPort == "" {
-		grpcPort = "50051"
+	rawGrpcPort := os.Getenv("GRPC_PORT")
+	if rawGrpcPort == "" {
+		rawGrpcPort = "50051"
 	}
-	if grpcPort[0] != ':' {
-		grpcPort = ":" + grpcPort
-	}
+	grpcPort := strings.TrimPrefix(rawGrpcPort, ":")
+	grpcAddr := fmt.Sprintf("0.0.0.0:%s", grpcPort)
 
-	webPort := os.Getenv("WEB_PORT")
-	if webPort == "" {
-		webPort = "8090"
+	rawWebPort := os.Getenv("WEB_PORT")
+	if rawWebPort == "" {
+		rawWebPort = "8090"
 	}
-	if webPort[0] != ':' {
-		webPort = ":" + webPort
-	}
+	webPort := strings.TrimPrefix(rawWebPort, ":")
+	webAddr := fmt.Sprintf("0.0.0.0:%s", webPort)
 
 	serverIP := os.Getenv("SERVER_IP")
 	if serverIP == "" {
@@ -39,26 +39,26 @@ func main() {
 	// 1. Initialize Broker
 	b := broker.NewBroker()
 
-	// 2. Start gRPC Server on 0.0.0.0:50051
-	lis, err := net.Listen("tcp", "0.0.0.0"+grpcPort)
+	// 2. Start gRPC Server explicitly on 0.0.0.0:50051 (all network interfaces)
+	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
-		log.Fatalf("Failed to listen on gRPC port %s: %v", grpcPort, err)
+		log.Fatalf("Failed to listen on gRPC address %s: %v", grpcAddr, err)
 	}
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterRemoteDesktopServer(grpcServer, b)
 
 	go func() {
-		log.Printf("🚀 gRPC Broker listening on 0.0.0.0%s (Target Server IP: %s%s)", grpcPort, serverIP, grpcPort)
+		log.Printf("🚀 gRPC Broker listening on ALL INTERFACES (%s) [Target Server IP: %s:%s]", grpcAddr, serverIP, grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
 	}()
 
-	// 3. Start Web Dashboard HTTP Server on 0.0.0.0:8090
+	// 3. Start Web Dashboard HTTP Server explicitly on 0.0.0.0:8090 (all network interfaces)
 	webServer := web.NewWebServer(b)
-	log.Printf("🌐 Web Dashboard listening on http://0.0.0.0%s (Target Server IP: http://%s%s)", webPort, serverIP, webPort)
-	if err := webServer.Start("0.0.0.0" + webPort); err != nil {
+	log.Printf("🌐 Web Dashboard listening on ALL INTERFACES (http://%s) [Target Server IP: http://%s:%s]", webAddr, serverIP, webPort)
+	if err := webServer.Start(webAddr); err != nil {
 		log.Fatalf("Web server error: %v", err)
 	}
 }
