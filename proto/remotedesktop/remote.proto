@@ -1,0 +1,181 @@
+syntax = "proto3";
+
+package remotedesktop;
+
+option go_package = "server-web/proto/remotedesktop;remotedesktop";
+
+// Remote Desktop gRPC Service
+service RemoteDesktop {
+  // Register client agent host (Server generates and returns unique 9-digit Client ID)
+  rpc RegisterClient (RegisterRequest) returns (RegisterResponse);
+
+  // Authenticate operator control client by Target Client ID
+  rpc AuthenticateControl (AuthRequest) returns (AuthResponse);
+
+  // Stream channel for Host Agent (Client)
+  rpc HostStream (stream HostMessage) returns (stream ControlMessage);
+
+  // Stream channel for Control Viewer
+  rpc ControlStream (stream ControlMessage) returns (stream HostMessage);
+
+  // Auto-Update service check
+  rpc CheckUpdate (UpdateCheckRequest) returns (UpdateCheckResponse);
+}
+
+message RegisterRequest {
+  string machine_name = 1;
+  string os_info = 2;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string client_id = 2;
+  string error_message = 3;
+  string session_token = 4;
+}
+
+message AuthRequest {
+  string target_client_id = 1;
+  string operator_name = 2;
+}
+
+message AuthResponse {
+  bool success = 1;
+  string error_message = 2;
+  string session_id = 3;
+  string p2p_endpoint = 4;
+}
+
+message UpdateCheckRequest {
+  string component = 1;       // "client" or "control"
+  string current_version = 2; // e.g. "0.1.0"
+  string os_target = 3;       // "windows" or "macos"
+}
+
+message UpdateCheckResponse {
+  bool update_available = 1;
+  string latest_version = 2;
+  string download_url = 3;
+  bytes binary_payload = 4;
+}
+
+message WebRtcSignal {
+  enum SignalType {
+    SDP_OFFER = 0;
+    SDP_ANSWER = 1;
+    ICE_CANDIDATE = 2;
+  }
+  SignalType type = 1;
+  string sdp_or_candidate = 2;
+  string sender_id = 3;
+}
+
+message HostMessage {
+  string session_id = 1;
+  oneof payload {
+    VideoFrame video_frame = 2;
+    HostStatus status = 3;
+    ScreenSpecs specs = 4;
+    WebRtcSignal webrtc_signal = 5;
+  }
+}
+
+message ScreenSpecs {
+  uint32 width = 1;
+  uint32 height = 2;
+  uint32 fps = 3;
+}
+
+message HostStatus {
+  bool connected = 1;
+  string message = 2;
+  string p2p_endpoint = 3;
+}
+
+message VideoFrame {
+  uint32 width = 1;
+  uint32 height = 2;
+  bytes data = 3;
+  int64 timestamp = 4;
+  enum Format {
+    RAW_RGB = 0;
+    JPEG = 1;
+    PNG = 2;
+    H264 = 3;
+  }
+  Format format = 5;
+}
+
+message ControlMessage {
+  string session_id = 1;
+  oneof payload {
+    InputEvent input_event = 2;
+    ControlCommand command = 3;
+    WebRtcSignal webrtc_signal = 4;
+  }
+}
+
+enum CommandType {
+  DISCONNECT = 0;
+  REQUEST_KEYFRAME = 1;
+  CHANGE_QUALITY = 2;
+  CONNECT_REQUEST = 3;
+  ACCEPT_SESSION = 4;
+  REJECT_SESSION = 5;
+}
+
+message ControlCommand {
+  CommandType type = 1;
+  string detail = 2;
+}
+
+message InputEvent {
+  oneof event {
+    MouseMoveEvent mouse_move = 1;
+    MouseButtonEvent mouse_button = 2;
+    MouseScrollEvent mouse_scroll = 3;
+    KeyEvent key = 4;
+  }
+}
+
+message MouseMoveEvent {
+  float x_ratio = 1;
+  float y_ratio = 2;
+  uint32 absolute_x = 3;
+  uint32 absolute_y = 4;
+}
+
+enum MouseButton {
+  LEFT = 0;
+  RIGHT = 1;
+  MIDDLE = 2;
+}
+
+enum ButtonAction {
+  PRESS = 0;
+  RELEASE = 1;
+}
+
+message MouseButtonEvent {
+  MouseButton button = 1;
+  ButtonAction action = 2;
+  float x_ratio = 3;
+  float y_ratio = 4;
+}
+
+message MouseScrollEvent {
+  float delta_x = 1;
+  float delta_y = 2;
+}
+
+enum KeyAction {
+  KEY_DOWN = 0;
+  KEY_UP = 1;
+}
+
+message KeyEvent {
+  uint32 vk_code = 1;
+  uint32 key_code = 2;
+  KeyAction action = 3;
+  string utf8_char = 4;
+}
