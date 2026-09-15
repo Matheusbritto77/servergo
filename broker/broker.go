@@ -15,18 +15,17 @@ import (
 )
 
 type ActiveClient struct {
-	ClientID    string
-	PIN         string
-	MachineName string
-	OSInfo      string
+	ClientID     string
+	MachineName  string
+	OSInfo       string
 	RegisteredAt time.Time
 	
 	// Channel to send ControlMessages (input events) to the host
 	HostControlChan chan *pb.ControlMessage
 	
 	// Subscribers (Control Viewers) receiving HostMessages (video frames)
-	mu           sync.RWMutex
-	subscribers  map[string]chan *pb.HostMessage
+	mu          sync.RWMutex
+	subscribers map[string]chan *pb.HostMessage
 }
 
 type Broker struct {
@@ -42,7 +41,6 @@ func NewBroker() *Broker {
 	}
 }
 
-// GetActiveClients returns list of registered client hosts for Web UI
 type ClientInfo struct {
 	ClientID     string    `json:"client_id"`
 	MachineName  string    `json:"machine_name"`
@@ -73,10 +71,10 @@ func (b *Broker) ListClients() []ClientInfo {
 }
 
 func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	if req.GetClientId() == "" || req.GetPin() == "" {
+	if req.GetClientId() == "" {
 		return &pb.RegisterResponse{
 			Success:      false,
-			ErrorMessage: "Client ID and PIN are required",
+			ErrorMessage: "Client ID is required",
 		}, nil
 	}
 
@@ -85,7 +83,6 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 
 	client := &ActiveClient{
 		ClientID:        req.GetClientId(),
-		PIN:             req.GetPin(),
 		MachineName:     req.GetMachineName(),
 		OSInfo:          req.GetOsInfo(),
 		RegisteredAt:    time.Now(),
@@ -94,7 +91,7 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 	}
 
 	b.clients[req.GetClientId()] = client
-	log.Printf("[BROKER] Registered host client: %s (%s - %s)", req.GetClientId(), req.GetMachineName(), req.GetOsInfo())
+	log.Printf("[BROKER] Registered host client by Unique ID: %s (%s - %s)", req.GetClientId(), req.GetMachineName(), req.GetOsInfo())
 
 	return &pb.RegisterResponse{
 		Success:      true,
@@ -107,22 +104,15 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	client, exists := b.clients[req.GetTargetClientId()]
 	b.mu.RUnlock()
 
-	if !exists {
+	if !exists || client == nil {
 		return &pb.AuthResponse{
 			Success:      false,
-			ErrorMessage: "Target client host not found",
-		}, nil
-	}
-
-	if client.PIN != req.GetPin() {
-		return &pb.AuthResponse{
-			Success:      false,
-			ErrorMessage: "Invalid PIN code",
+			ErrorMessage: fmt.Sprintf("Target Client ID %s is offline or not found", req.GetTargetClientId()),
 		}, nil
 	}
 
 	sessionID := fmt.Sprintf("sess_%s_%d", req.GetTargetClientId(), time.Now().UnixNano())
-	log.Printf("[BROKER] Authenticated operator '%s' to client '%s' (Session: %s)", req.GetOperatorName(), req.GetTargetClientId(), sessionID)
+	log.Printf("[BROKER] Direct connection established from operator '%s' to Client ID '%s' (Session: %s)", req.GetOperatorName(), req.GetTargetClientId(), sessionID)
 
 	return &pb.AuthResponse{
 		Success:   true,
@@ -133,7 +123,6 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 func (b *Broker) HostStream(stream pb.RemoteDesktop_HostStreamServer) error {
 	ctx := stream.Context()
 
-	// Receive first message to identify host
 	firstMsg, err := stream.Recv()
 	if err != nil {
 		return err
@@ -150,7 +139,6 @@ func (b *Broker) HostStream(stream pb.RemoteDesktop_HostStreamServer) error {
 
 	log.Printf("[BROKER] HostStream connected for Client ID: %s", clientID)
 
-	// Goroutine to send control inputs received from operators to this Host agent
 	errChan := make(chan error, 2)
 	go func() {
 		for {
@@ -169,9 +157,7 @@ func (b *Broker) HostStream(stream pb.RemoteDesktop_HostStreamServer) error {
 		}
 	}()
 
-	// Read loop: receive video frames and status from Host agent
 	go func() {
-		// Handle first message if it contains specs or status
 		b.broadcastToSubscribers(client, firstMsg)
 
 		for {
@@ -206,7 +192,6 @@ func (b *Broker) broadcastToSubscribers(client *ActiveClient, msg *pb.HostMessag
 		select {
 		case subChan <- msg:
 		default:
-			// Drop frame if subscriber buffer is full to prevent backpressure blocking
 		}
 	}
 }
@@ -247,7 +232,6 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 
 	errChan := make(chan error, 2)
 
-	// Send video frames to Control Viewer
 	go func() {
 		for {
 			select {
@@ -265,9 +249,7 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 		}
 	}()
 
-	// Receive input events from Control Viewer and forward to Host agent
 	go func() {
-		// Process first input message if any
 		if firstMsg.GetInputEvent() != nil || firstMsg.GetCommand() != nil {
 			client.HostControlChan <- firstMsg
 		}
@@ -285,7 +267,6 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 			select {
 			case client.HostControlChan <- msg:
 			default:
-				// Drop input if host queue full
 			}
 		}
 	}()

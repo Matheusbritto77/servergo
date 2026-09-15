@@ -31,7 +31,7 @@ const (
 type RemoteDesktopClient interface {
 	// Register client agent host
 	RegisterClient(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
-	// Authenticate operator control client
+	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
 	// Stream channel for Host Agent (Client): Host sends HostMessage (frames), receives ControlMessage (input)
 	HostStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_HostStreamClient, error)
@@ -133,7 +133,7 @@ func (x *remoteDesktopControlStreamClient) Recv() (*HostMessage, error) {
 type RemoteDesktopServer interface {
 	// Register client agent host
 	RegisterClient(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	// Authenticate operator control client
+	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
 	// Stream channel for Host Agent (Client): Host sends HostMessage (frames), receives ControlMessage (input)
 	HostStream(RemoteDesktop_HostStreamServer) error
