@@ -113,14 +113,14 @@ func (s *NexusRelayServer) listenLoop() {
 			s.conn.WriteToUDP(respHdr, remoteAddr)
 
 		case NexusTypeVideo, NexusTypeInput, NexusTypeSignal, NexusTypeKey:
-			// Low-latency datagram forwarding to paired peer endpoint
+			// Low-latency O(1) datagram forwarding to paired peer endpoint (StreamID ^ 1)
+			targetStreamID := hdr.StreamID ^ 1
 			s.peersMutex.RLock()
-			for streamID, targetAddr := range s.peerMap {
-				if streamID != hdr.StreamID {
-					s.conn.WriteToUDP(buf[:n], targetAddr)
-				}
-			}
+			targetAddr, exists := s.peerMap[targetStreamID]
 			s.peersMutex.RUnlock()
+			if exists && targetAddr != nil {
+				s.conn.WriteToUDP(buf[:n], targetAddr)
+			}
 		}
 	}
 }
