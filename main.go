@@ -79,6 +79,34 @@ func main() {
 		}
 	}()
 
+	// 2.5 Start UDP Relay Server on 0.0.0.0:50052 for 60 FPS Low-Latency UDP Transport
+	go func() {
+		udpAddr, err := net.ResolveUDPAddr("udp", "0.0.0.0:50052")
+		if err != nil {
+			log.Printf("Failed to resolve UDP addr: %v", err)
+			return
+		}
+		conn, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			log.Printf("Failed to listen on UDP port 50052: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		log.Printf("⚡ High-Performance UDP Relay Server listening on 0.0.0.0:50052 [P2P/UDP Target: %s:50052]", serverIP)
+
+		buf := make([]byte, 512*1024)
+		for {
+			n, srcAddr, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				continue
+			}
+			if n >= 8 && string(buf[:8]) == "P2P_PING" {
+				conn.WriteToUDP([]byte("P2P_PONG"), srcAddr)
+			}
+		}
+	}()
+
 	// 3. Start Web Dashboard HTTP Server on 0.0.0.0:8090 (or PORT env)
 	webServer := web.NewWebServer(b)
 	log.Printf("🌐 Web Dashboard listening on ALL INTERFACES (http://%s) [Target Server IP: http://%s:%s]", webAddr, serverIP, webPort)
