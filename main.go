@@ -79,9 +79,13 @@ func main() {
 		}
 	}()
 
-	// 2.5 Start NEXUS-P2P Custom Protocol Relay Engine on UDP 0.0.0.0:50052
+	// 2.5 Create NEXUS-P2P Custom Protocol Relay Engine on UDP 0.0.0.0:50052
+	nexusServer := broker.NewNexusRelayServer(50052)
+
+	// Connect broker to the Nexus relay for dispatching Control frames to host peers.
+	b.SetNexusRelay(nexusServer)
+
 	go func() {
-		nexusServer := broker.NewNexusRelayServer(50052)
 		if err := nexusServer.Start(); err != nil {
 			log.Printf("[NEXUS] Failed to start NEXUS UDP server: %v", err)
 		}

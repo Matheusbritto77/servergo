@@ -40,6 +40,8 @@ uint8_t nexus_core_lane_for_kind(uint8_t kind) {
     case NEXUS_CORE_KIND_PULSE:
     case NEXUS_CORE_KIND_TRACE:
     case NEXUS_CORE_KIND_TRACE_REPLY:
+    case NEXUS_CORE_KIND_P2P_PROBE:
+    case NEXUS_CORE_KIND_P2P_PUNCH:
         return NEXUS_CORE_LANE_TRACE;
     default:
         return NEXUS_CORE_LANE_COMMAND;
@@ -59,7 +61,10 @@ uint16_t nexus_core_flags_for_kind(uint8_t kind) {
     case NEXUS_CORE_KIND_TRACE:
         return NEXUS_CORE_FLAG_RECEIPT_WANTED | NEXUS_CORE_FLAG_TRACE;
     case NEXUS_CORE_KIND_TRACE_REPLY:
+    case NEXUS_CORE_KIND_P2P_PUNCH:
         return NEXUS_CORE_FLAG_TRACE;
+    case NEXUS_CORE_KIND_P2P_PROBE:
+        return NEXUS_CORE_FLAG_RECEIPT_WANTED | NEXUS_CORE_FLAG_TRACE | NEXUS_CORE_FLAG_DIRECT;
     default:
         return 0;
     }
@@ -254,6 +259,52 @@ int nexus_core_pack_hello_reply(const nexus_core_header *request, uint8_t *out, 
                                 out_len);
 }
 
+int nexus_core_pack_trace_reply(uint32_t stream_id, uint32_t seq_num, uint32_t ip, uint16_t port, uint8_t *out, size_t out_len) {
+    uint8_t body[6];
+    put32(body, ip);
+    put16(body + 4, port);
+    return nexus_core_pack_frame(NEXUS_CORE_KIND_TRACE_REPLY,
+                                stream_id,
+                                seq_num,
+                                seq_num,
+                                0,
+                                0,
+                                body,
+                                6,
+                                out,
+                                out_len);
+}
+
+int nexus_core_pack_p2p_probe(uint32_t stream_id, uint32_t token, uint8_t *out, size_t out_len) {
+    uint8_t body[4];
+    put32(body, token);
+    return nexus_core_pack_frame(NEXUS_CORE_KIND_P2P_PROBE,
+                                stream_id,
+                                0,
+                                0,
+                                0,
+                                0,
+                                body,
+                                4,
+                                out,
+                                out_len);
+}
+
+int nexus_core_pack_p2p_punch(uint32_t stream_id, uint32_t token, uint8_t *out, size_t out_len) {
+    uint8_t body[4];
+    put32(body, token);
+    return nexus_core_pack_frame(NEXUS_CORE_KIND_P2P_PUNCH,
+                                stream_id,
+                                0,
+                                0,
+                                0,
+                                0,
+                                body,
+                                4,
+                                out,
+                                out_len);
+}
+
 int nexus_core_chunk_encode(const nexus_core_chunk_header *header, uint8_t *out, size_t len) {
     if (!header || !out || len < NEXUS_CORE_CHUNK_HEADER_LEN) {
         return -1;
@@ -312,4 +363,43 @@ uint32_t nexus_core_receipt_num(const nexus_core_receipt_window *window) {
 
 uint32_t nexus_core_receipt_bits(const nexus_core_receipt_window *window) {
     return window ? window->mask : 0;
+}
+
+uint32_t nexus_core_estimate_rtt(uint32_t send_ts, uint32_t now_ts) {
+    if (now_ts >= send_ts) {
+        return now_ts - send_ts;
+    }
+    return (0xFFFFFFFFu - send_ts) + now_ts + 1u;
+}
+
+float nexus_core_estimate_loss(uint32_t receipt_bits) {
+    uint32_t received = 0;
+    for (int i = 0; i < 32; i++) {
+        if ((receipt_bits & (1u << i)) != 0) {
+            received++;
+        }
+    }
+    return (32.0f - (float)received) / 32.0f;
+}
+
+int nexus_core_encrypt_payload(const uint8_t *key, size_t key_len, uint32_t nonce, const uint8_t *in, size_t in_len, uint8_t *out) {
+    if (!in || !out || in_len == 0) {
+        return -1;
+    }
+    uint32_t k = 0x9e3779b9u ^ nonce;
+    if (key && key_len > 0) {
+        for (size_t i = 0; i < key_len; i++) {
+            k = (k ^ ((uint32_t)key[i] << (8 * (i % 4)))) * 16777619u;
+        }
+    }
+    for (size_t i = 0; i < in_len; i++) {
+        k = (k ^ (uint32_t)i) * 1103515245u + 12345u;
+        uint8_t mask = (uint8_t)(k >> 16);
+        out[i] = in[i] ^ mask;
+    }
+    return (int)in_len;
+}
+
+int nexus_core_decrypt_payload(const uint8_t *key, size_t key_len, uint32_t nonce, const uint8_t *in, size_t in_len, uint8_t *out) {
+    return nexus_core_encrypt_payload(key, key_len, nonce, in, in_len, out);
 }

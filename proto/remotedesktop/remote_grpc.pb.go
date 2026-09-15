@@ -21,24 +21,13 @@ const _ = grpc.SupportPackageIsVersion7
 const (
 	RemoteDesktop_RegisterClient_FullMethodName      = "/remotedesktop.RemoteDesktop/RegisterClient"
 	RemoteDesktop_AuthenticateControl_FullMethodName = "/remotedesktop.RemoteDesktop/AuthenticateControl"
-	RemoteDesktop_HostStream_FullMethodName          = "/remotedesktop.RemoteDesktop/HostStream"
-	RemoteDesktop_ControlStream_FullMethodName       = "/remotedesktop.RemoteDesktop/ControlStream"
 	RemoteDesktop_CheckUpdate_FullMethodName         = "/remotedesktop.RemoteDesktop/CheckUpdate"
 )
 
 // RemoteDesktopClient is the client API for RemoteDesktop service.
-//
-// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RemoteDesktopClient interface {
-	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
-	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
-	// Stream channel for Host Agent (Client)
-	HostStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_HostStreamClient, error)
-	// Stream channel for Control Viewer
-	ControlStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlStreamClient, error)
-	// Auto-Update service check
 	CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error)
 }
 
@@ -68,68 +57,6 @@ func (c *remoteDesktopClient) AuthenticateControl(ctx context.Context, in *AuthR
 	return out, nil
 }
 
-func (c *remoteDesktopClient) HostStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_HostStreamClient, error) {
-	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[0], RemoteDesktop_HostStream_FullMethodName, opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &remoteDesktopHostStreamClient{stream}
-	return x, nil
-}
-
-type RemoteDesktop_HostStreamClient interface {
-	Send(*HostMessage) error
-	Recv() (*ControlMessage, error)
-	grpc.ClientStream
-}
-
-type remoteDesktopHostStreamClient struct {
-	grpc.ClientStream
-}
-
-func (x *remoteDesktopHostStreamClient) Send(m *HostMessage) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *remoteDesktopHostStreamClient) Recv() (*ControlMessage, error) {
-	m := new(ControlMessage)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *remoteDesktopClient) ControlStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlStreamClient, error) {
-	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[1], RemoteDesktop_ControlStream_FullMethodName, opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &remoteDesktopControlStreamClient{stream}
-	return x, nil
-}
-
-type RemoteDesktop_ControlStreamClient interface {
-	Send(*ControlMessage) error
-	Recv() (*HostMessage, error)
-	grpc.ClientStream
-}
-
-type remoteDesktopControlStreamClient struct {
-	grpc.ClientStream
-}
-
-func (x *remoteDesktopControlStreamClient) Send(m *ControlMessage) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *remoteDesktopControlStreamClient) Recv() (*HostMessage, error) {
-	m := new(HostMessage)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 func (c *remoteDesktopClient) CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error) {
 	out := new(UpdateCheckResponse)
 	err := c.cc.Invoke(ctx, RemoteDesktop_CheckUpdate_FullMethodName, in, out, opts...)
@@ -140,18 +67,9 @@ func (c *remoteDesktopClient) CheckUpdate(ctx context.Context, in *UpdateCheckRe
 }
 
 // RemoteDesktopServer is the server API for RemoteDesktop service.
-// All implementations must embed UnimplementedRemoteDesktopServer
-// for forward compatibility
 type RemoteDesktopServer interface {
-	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
-	// Stream channel for Host Agent (Client)
-	HostStream(RemoteDesktop_HostStreamServer) error
-	// Stream channel for Control Viewer
-	ControlStream(RemoteDesktop_ControlStreamServer) error
-	// Auto-Update service check
 	CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error)
 	mustEmbedUnimplementedRemoteDesktopServer()
 }
@@ -166,20 +84,12 @@ func (UnimplementedRemoteDesktopServer) RegisterClient(context.Context, *Registe
 func (UnimplementedRemoteDesktopServer) AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AuthenticateControl not implemented")
 }
-func (UnimplementedRemoteDesktopServer) HostStream(RemoteDesktop_HostStreamServer) error {
-	return status.Errorf(codes.Unimplemented, "method HostStream not implemented")
-}
-func (UnimplementedRemoteDesktopServer) ControlStream(RemoteDesktop_ControlStreamServer) error {
-	return status.Errorf(codes.Unimplemented, "method ControlStream not implemented")
-}
 func (UnimplementedRemoteDesktopServer) CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckUpdate not implemented")
 }
 func (UnimplementedRemoteDesktopServer) mustEmbedUnimplementedRemoteDesktopServer() {}
 
 // UnsafeRemoteDesktopServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to RemoteDesktopServer will
-// result in compilation errors.
 type UnsafeRemoteDesktopServer interface {
 	mustEmbedUnimplementedRemoteDesktopServer()
 }
@@ -224,58 +134,6 @@ func _RemoteDesktop_AuthenticateControl_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
-func _RemoteDesktop_HostStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RemoteDesktopServer).HostStream(&remoteDesktopHostStreamServer{stream})
-}
-
-type RemoteDesktop_HostStreamServer interface {
-	Send(*ControlMessage) error
-	Recv() (*HostMessage, error)
-	grpc.ServerStream
-}
-
-type remoteDesktopHostStreamServer struct {
-	grpc.ServerStream
-}
-
-func (x *remoteDesktopHostStreamServer) Send(m *ControlMessage) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *remoteDesktopHostStreamServer) Recv() (*HostMessage, error) {
-	m := new(HostMessage)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func _RemoteDesktop_ControlStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(RemoteDesktopServer).ControlStream(&remoteDesktopControlStreamServer{stream})
-}
-
-type RemoteDesktop_ControlStreamServer interface {
-	Send(*HostMessage) error
-	Recv() (*ControlMessage, error)
-	grpc.ServerStream
-}
-
-type remoteDesktopControlStreamServer struct {
-	grpc.ServerStream
-}
-
-func (x *remoteDesktopControlStreamServer) Send(m *HostMessage) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *remoteDesktopControlStreamServer) Recv() (*ControlMessage, error) {
-	m := new(ControlMessage)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 func _RemoteDesktop_CheckUpdate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UpdateCheckRequest)
 	if err := dec(in); err != nil {
@@ -295,8 +153,6 @@ func _RemoteDesktop_CheckUpdate_Handler(srv interface{}, ctx context.Context, de
 }
 
 // RemoteDesktop_ServiceDesc is the grpc.ServiceDesc for RemoteDesktop service.
-// It's only intended for direct use with grpc.RegisterService,
-// and not to be introspected or modified (even as a copy)
 var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "remotedesktop.RemoteDesktop",
 	HandlerType: (*RemoteDesktopServer)(nil),
@@ -314,19 +170,6 @@ var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RemoteDesktop_CheckUpdate_Handler,
 		},
 	},
-	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "HostStream",
-			Handler:       _RemoteDesktop_HostStream_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
-		},
-		{
-			StreamName:    "ControlStream",
-			Handler:       _RemoteDesktop_ControlStream_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
-		},
-	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "proto/remote.proto",
 }

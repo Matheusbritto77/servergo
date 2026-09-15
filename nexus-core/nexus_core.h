@@ -23,6 +23,8 @@ extern "C" {
 #define NEXUS_CORE_KIND_GAP 0x08
 #define NEXUS_CORE_KIND_TRACE 0x09
 #define NEXUS_CORE_KIND_TRACE_REPLY 0x0A
+#define NEXUS_CORE_KIND_P2P_PROBE 0x0B
+#define NEXUS_CORE_KIND_P2P_PUNCH 0x0C
 
 #define NEXUS_CORE_FLAG_RECEIPT_WANTED (1u << 0)
 #define NEXUS_CORE_FLAG_ORDERED (1u << 1)
@@ -30,6 +32,7 @@ extern "C" {
 #define NEXUS_CORE_FLAG_ANCHOR (1u << 3)
 #define NEXUS_CORE_FLAG_TRACE (1u << 4)
 #define NEXUS_CORE_FLAG_DIRECT (1u << 5)
+#define NEXUS_CORE_FLAG_ENCRYPTED (1u << 6)
 
 #define NEXUS_CORE_LANE_COMMAND 0
 #define NEXUS_CORE_LANE_MEDIA 1
@@ -93,6 +96,9 @@ int nexus_core_pack_receipt(uint32_t stream_id,
                         uint8_t *out,
                         size_t out_len);
 int nexus_core_pack_hello_reply(const nexus_core_header *request, uint8_t *out, size_t out_len);
+int nexus_core_pack_trace_reply(uint32_t stream_id, uint32_t seq_num, uint32_t ip, uint16_t port, uint8_t *out, size_t out_len);
+int nexus_core_pack_p2p_probe(uint32_t stream_id, uint32_t token, uint8_t *out, size_t out_len);
+int nexus_core_pack_p2p_punch(uint32_t stream_id, uint32_t token, uint8_t *out, size_t out_len);
 
 int nexus_core_chunk_encode(const nexus_core_chunk_header *header, uint8_t *out, size_t len);
 int nexus_core_chunk_decode(const uint8_t *data, size_t len, nexus_core_chunk_header *out);
@@ -101,6 +107,11 @@ void nexus_core_receipt_init(nexus_core_receipt_window *window);
 void nexus_core_receipt_observe(nexus_core_receipt_window *window, uint32_t seq_num);
 uint32_t nexus_core_receipt_num(const nexus_core_receipt_window *window);
 uint32_t nexus_core_receipt_bits(const nexus_core_receipt_window *window);
+
+uint32_t nexus_core_estimate_rtt(uint32_t send_ts, uint32_t now_ts);
+float nexus_core_estimate_loss(uint32_t receipt_bits);
+int nexus_core_encrypt_payload(const uint8_t *key, size_t key_len, uint32_t nonce, const uint8_t *in, size_t in_len, uint8_t *out);
+int nexus_core_decrypt_payload(const uint8_t *key, size_t key_len, uint32_t nonce, const uint8_t *in, size_t in_len, uint8_t *out);
 
 #ifdef __cplusplus
 }

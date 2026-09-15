@@ -1,21 +1,32 @@
 package broker
 
+/*
+#cgo CFLAGS: -I../nexus-core
+#include "nexus_core.h"
+*/
+import "C"
+
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"math/rand"
 	"net"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	pb "server-web/proto/remotedesktop"
 
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+)
+
+// NexusControlTag identifies the type of protobuf payload inside a Nexus Control frame body.
+const (
+	NexusControlTagCommand byte = 0x01
+	NexusControlTagStatus  byte = 0x02
 )
 
 type ActiveClient struct {
@@ -24,10 +35,6 @@ type ActiveClient struct {
 	OSInfo       string
 	RemoteIP     string
 	RegisteredAt time.Time
-
-	HostControlChan chan *pb.ControlMessage
-	mu              sync.RWMutex
-	subscribers     map[string]chan *pb.HostMessage
 }
 
 type Broker struct {
@@ -36,6 +43,9 @@ type Broker struct {
 	mu      sync.RWMutex
 	clients map[string]*ActiveClient
 	rnd     *rand.Rand
+
+	// Reference to the Nexus relay for sending control frames to peers.
+	nexusRelay *NexusRelayServer
 }
 
 func NewBroker() *Broker {
@@ -43,6 +53,12 @@ func NewBroker() *Broker {
 		clients: make(map[string]*ActiveClient),
 		rnd:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
+}
+
+// SetNexusRelay connects the broker to the Nexus UDP relay so it can
+// dispatch control frames (e.g. ConnectRequest) to host peers.
+func (b *Broker) SetNexusRelay(relay *NexusRelayServer) {
+	b.nexusRelay = relay
 }
 
 func normalizeID(id string) string {
@@ -76,7 +92,6 @@ type ClientInfo struct {
 	MachineName  string    `json:"machine_name"`
 	OSInfo       string    `json:"os_info"`
 	RegisteredAt time.Time `json:"registered_at"`
-	HasControl   bool      `json:"has_control"`
 }
 
 func (b *Broker) ListClients() []ClientInfo {
@@ -85,16 +100,11 @@ func (b *Broker) ListClients() []ClientInfo {
 
 	var list []ClientInfo
 	for _, c := range b.clients {
-		c.mu.RLock()
-		hasControl := len(c.subscribers) > 0
-		c.mu.RUnlock()
-
 		list = append(list, ClientInfo{
 			ClientID:     c.ClientID,
 			MachineName:  c.MachineName,
 			OSInfo:       c.OSInfo,
 			RegisteredAt: c.RegisteredAt,
-			HasControl:   hasControl,
 		})
 	}
 	return list
@@ -135,13 +145,11 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 	}
 
 	client := &ActiveClient{
-		ClientID:        clientID,
-		MachineName:     req.GetMachineName(),
-		OSInfo:          req.GetOsInfo(),
-		RemoteIP:        remoteIP,
-		RegisteredAt:    time.Now(),
-		HostControlChan: make(chan *pb.ControlMessage, 512),
-		subscribers:     make(map[string]chan *pb.HostMessage),
+		ClientID:     clientID,
+		MachineName:  req.GetMachineName(),
+		OSInfo:       req.GetOsInfo(),
+		RemoteIP:     remoteIP,
+		RegisteredAt: time.Now(),
 	}
 
 	b.clients[clientID] = client
@@ -168,20 +176,42 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	p2pEndpoint := fmt.Sprintf("%s:50052", client.RemoteIP)
 	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (IP: %s - P2P Target: %s)", req.GetOperatorName(), client.ClientID, client.RemoteIP, p2pEndpoint)
 
-	// Send CONNECT_REQUEST command to host agent
-	select {
-	case client.HostControlChan <- &pb.ControlMessage{
-		SessionId: sessionID,
-		Payload: &pb.ControlMessage_Command{
-			Command: &pb.ControlCommand{
-				Type:   pb.CommandType_CONNECT_REQUEST,
-				Detail: req.GetOperatorName(),
-			},
-		},
-	}:
-		log.Printf("🔔 [BROKER] Connection request dispatched to Client ID '%s'", client.ClientID)
-	default:
-		log.Printf("⚠️ [BROKER] Could not deliver connection request to Client ID '%s' (buffer full)", client.ClientID)
+	// Send ConnectRequest to the host via Nexus Control frame through the UDP relay.
+	if b.nexusRelay != nil {
+		cmd := &pb.ControlCommand{
+			Type:   pb.CommandType_CONNECT_REQUEST,
+			Detail: req.GetOperatorName(),
+		}
+		cmdBytes, err := proto.Marshal(cmd)
+		if err == nil {
+			// Nexus Control frame body: [1-byte tag][protobuf payload]
+			body := make([]byte, 1+len(cmdBytes))
+			body[0] = NexusControlTagCommand
+			copy(body[1:], cmdBytes)
+
+			// Build a Nexus Control frame targeting the host's stream_id.
+			hostStreamID := nexusCoreSessionStreamID(client.ClientID, false)
+			frame := make([]byte, int(C.NEXUS_CORE_HEADER_LEN)+len(body))
+			frameLen := C.nexus_core_pack_frame(
+				C.NEXUS_CORE_KIND_CONTROL,
+				C.uint32_t(hostStreamID),
+				0,
+				0,
+				0,
+				0,
+				(*C.uint8_t)(unsafe.Pointer(&body[0])),
+				C.size_t(len(body)),
+				(*C.uint8_t)(unsafe.Pointer(&frame[0])),
+				C.size_t(len(frame)),
+			)
+			if frameLen > 0 {
+				if b.nexusRelay.SendToStream(hostStreamID, frame[:int(frameLen)]) {
+					log.Printf("🔔 [BROKER] ConnectRequest dispatched to Client ID '%s' via Nexus Control frame", client.ClientID)
+				} else {
+					log.Printf("⚠️ [BROKER] Host '%s' not reachable via Nexus relay (no UDP route registered)", client.ClientID)
+				}
+			}
+		}
 	}
 
 	return &pb.AuthResponse{
@@ -191,166 +221,16 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	}, nil
 }
 
-func (b *Broker) HostStream(stream pb.RemoteDesktop_HostStreamServer) error {
-	ctx := stream.Context()
-
-	firstMsg, err := stream.Recv()
-	if err != nil {
-		return err
+// nexusCoreSessionStreamID computes the Nexus stream_id for a given client ID string.
+func nexusCoreSessionStreamID(clientID string, isOperator bool) uint32 {
+	data := []byte(clientID)
+	isOp := C.int(0)
+	if isOperator {
+		isOp = 1
 	}
-
-	clientID := firstMsg.GetSessionId()
-	client, exists := b.findClient(clientID)
-
-	if !exists {
-		return status.Errorf(codes.NotFound, "Client ID %s not registered", clientID)
-	}
-
-	log.Printf("[BROKER] HostStream connected for Client ID: %s", client.ClientID)
-
-	errChan := make(chan error, 2)
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ctrlMsg, ok := <-client.HostControlChan:
-				if !ok {
-					return
-				}
-				if err := stream.Send(ctrlMsg); err != nil {
-					errChan <- err
-					return
-				}
-			}
-		}
-	}()
-
-	go func() {
-		b.broadcastToSubscribers(client, firstMsg)
-
-		for {
-			msg, err := stream.Recv()
-			if err == io.EOF {
-				errChan <- nil
-				return
-			}
-			if err != nil {
-				errChan <- err
-				return
-			}
-			b.broadcastToSubscribers(client, msg)
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Printf("[BROKER] HostStream closed for Client ID: %s", clientID)
-		return ctx.Err()
-	case err := <-errChan:
-		log.Printf("[BROKER] HostStream ended for Client ID %s: %v", clientID, err)
-		return err
-	}
-}
-
-func (b *Broker) broadcastToSubscribers(client *ActiveClient, msg *pb.HostMessage) {
-	client.mu.RLock()
-	defer client.mu.RUnlock()
-
-	for _, subChan := range client.subscribers {
-		select {
-		case subChan <- msg:
-		default:
-			// Non-blocking zero-lag strategy: drop oldest frame and insert latest frame immediately
-			select {
-			case <-subChan:
-			default:
-			}
-			select {
-			case subChan <- msg:
-			default:
-			}
-		}
-	}
-}
-
-func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) error {
-	ctx := stream.Context()
-
-	firstMsg, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-
-	clientID := firstMsg.GetSessionId()
-	client, exists := b.findClient(clientID)
-
-	if !exists {
-		return status.Errorf(codes.NotFound, "Target Client ID %s not registered", clientID)
-	}
-
-	subID := fmt.Sprintf("sub_%d", time.Now().UnixNano())
-	frameChan := make(chan *pb.HostMessage, 4)
-
-	client.mu.Lock()
-	client.subscribers[subID] = frameChan
-	client.mu.Unlock()
-
-	defer func() {
-		client.mu.Lock()
-		delete(client.subscribers, subID)
-		client.mu.Unlock()
-		close(frameChan)
-		log.Printf("[BROKER] Operator disconnected from Client ID: %s", clientID)
-	}()
-
-	log.Printf("[BROKER] ControlStream connected to Client ID: %s (Sub: %s)", clientID, subID)
-
-	errChan := make(chan error, 2)
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case hostMsg, ok := <-frameChan:
-				if !ok {
-					return
-				}
-				if err := stream.Send(hostMsg); err != nil {
-					errChan <- err
-					return
-				}
-			}
-		}
-	}()
-
-	go func() {
-		if firstMsg.GetInputEvent() != nil || firstMsg.GetCommand() != nil || firstMsg.GetWebrtcSignal() != nil {
-			client.HostControlChan <- firstMsg
-		}
-
-		for {
-			msg, err := stream.Recv()
-			if err == io.EOF {
-				errChan <- nil
-				return
-			}
-			if err != nil {
-				errChan <- err
-				return
-			}
-			select {
-			case client.HostControlChan <- msg:
-			default:
-			}
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-errChan:
-		return err
-	}
+	return uint32(C.nexus_core_session_stream_id(
+		(*C.uint8_t)(unsafe.Pointer(&data[0])),
+		C.size_t(len(data)),
+		isOp,
+	))
 }

@@ -4,19 +4,14 @@ package remotedesktop;
 
 option go_package = "server-web/proto/remotedesktop;remotedesktop";
 
-// Remote Desktop gRPC Service
+// Remote Desktop gRPC Service — Unary RPCs only.
+// All continuous data transport (video, input, control) uses the Nexus Protocol over UDP.
 service RemoteDesktop {
   // Register client agent host (Server generates and returns unique 9-digit Client ID)
   rpc RegisterClient (RegisterRequest) returns (RegisterResponse);
 
   // Authenticate operator control client by Target Client ID
   rpc AuthenticateControl (AuthRequest) returns (AuthResponse);
-
-  // Stream channel for Host Agent (Client)
-  rpc HostStream (stream HostMessage) returns (stream ControlMessage);
-
-  // Stream channel for Control Viewer
-  rpc ControlStream (stream ControlMessage) returns (stream HostMessage);
 
   // Auto-Update service check
   rpc CheckUpdate (UpdateCheckRequest) returns (UpdateCheckResponse);
@@ -59,16 +54,6 @@ message UpdateCheckResponse {
   bytes binary_payload = 4;
 }
 
-message WebRtcSignal {
-  enum SignalType {
-    SDP_OFFER = 0;
-    SDP_ANSWER = 1;
-    ICE_CANDIDATE = 2;
-  }
-  SignalType type = 1;
-  string sdp_or_candidate = 2;
-  string sender_id = 3;
-}
 
 message HostMessage {
   string session_id = 1;
@@ -76,7 +61,6 @@ message HostMessage {
     VideoFrame video_frame = 2;
     HostStatus status = 3;
     ScreenSpecs specs = 4;
-    WebRtcSignal webrtc_signal = 5;
   }
 }
 
@@ -111,7 +95,6 @@ message ControlMessage {
   oneof payload {
     InputEvent input_event = 2;
     ControlCommand command = 3;
-    WebRtcSignal webrtc_signal = 4;
   }
 }
 

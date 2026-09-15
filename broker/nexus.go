@@ -7,6 +7,7 @@ package broker
 import "C"
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
@@ -79,13 +80,38 @@ func (s *NexusRelayServer) listenLoop() {
 			continue
 		}
 
-		// Register or update the broker-observed route endpoint.
+		// Register or update the broker-observed route endpoint (Zero-Disconnection IP Roaming).
 		s.peersMutex.Lock()
+		oldPeer, exists := s.peerMap[uint32(hdr.stream_id)]
+		if exists && oldPeer.addr != nil && oldPeer.addr.String() != remoteAddr.String() {
+			fmt.Printf("[NEXUS ROAMING] 🔄 Dynamic IP Roaming detected for stream_id 0x%x -> %s\n", hdr.stream_id, remoteAddr)
+		}
 		s.peerMap[uint32(hdr.stream_id)] = nexusPeer{
 			addr:     remoteAddr,
 			lastSeen: time.Now(),
 		}
 		s.peersMutex.Unlock()
+
+		if hdr.kind == C.NEXUS_CORE_KIND_TRACE {
+			// STUN-like reflexive endpoint discovery: return client's public IP & Port.
+			ip4 := remoteAddr.IP.To4()
+			var ipUint uint32
+			if ip4 != nil {
+				ipUint = binary.BigEndian.Uint32(ip4)
+			}
+			resp := make([]byte, int(C.NEXUS_CORE_HEADER_LEN)+6)
+			respLen := C.nexus_core_pack_trace_reply(
+				hdr.stream_id,
+				hdr.seq_num,
+				C.uint32_t(ipUint),
+				C.uint16_t(remoteAddr.Port),
+				(*C.uint8_t)(unsafe.Pointer(&resp[0])),
+				C.size_t(len(resp)),
+			)
+			if respLen > 0 {
+				_, _ = s.conn.WriteToUDP(resp[:int(respLen)], remoteAddr)
+			}
+		}
 
 		switch C.nexus_core_route_action(hdr.kind) {
 		case C.NEXUS_CORE_ROUTE_HELLO_REPLY:
@@ -127,6 +153,22 @@ func (s *NexusRelayServer) cleanupLoop() {
 		}
 		s.peersMutex.Unlock()
 	}
+}
+
+// SendToStream sends a raw Nexus frame to the peer registered under the given stream_id.
+// Returns true if the peer was found and the frame was dispatched.
+func (s *NexusRelayServer) SendToStream(streamID uint32, data []byte) bool {
+	if s.conn == nil || len(data) == 0 {
+		return false
+	}
+	s.peersMutex.RLock()
+	peer, exists := s.peerMap[streamID]
+	s.peersMutex.RUnlock()
+	if !exists || peer.addr == nil {
+		return false
+	}
+	_, err := s.conn.WriteToUDP(data, peer.addr)
+	return err == nil
 }
 
 func tuneNexusSocket(conn *net.UDPConn) {
