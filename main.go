@@ -6,12 +6,14 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"server-web/broker"
 	pb "server-web/proto/remotedesktop"
 	"server-web/web"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 func main() {
@@ -43,17 +45,35 @@ func main() {
 	// 1. Initialize Broker
 	b := broker.NewBroker()
 
-	// 2. Start gRPC Server on 0.0.0.0:50051
+	// 2. Start gRPC Server on 0.0.0.0:50051 with High-Throughput Keepalive & Window Tuning
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on gRPC address %s: %v", grpcAddr, err)
 	}
 
-	grpcServer := grpc.NewServer()
+	kaParams := keepalive.ServerParameters{
+		MaxConnectionIdle: 15 * time.Minute,
+		Time:              10 * time.Second,
+		Timeout:           3 * time.Second,
+	}
+
+	kaEnforce := keepalive.EnforcementPolicy{
+		MinTime:             5 * time.Second,
+		PermitWithoutStream: true,
+	}
+
+	grpcServer := grpc.NewServer(
+		grpc.KeepaliveParams(kaParams),
+		grpc.KeepaliveEnforcementPolicy(kaEnforce),
+		grpc.MaxRecvMsgSize(32*1024*1024),
+		grpc.MaxSendMsgSize(32*1024*1024),
+		grpc.InitialWindowSize(4*1024*1024),
+		grpc.InitialConnWindowSize(8*1024*1024),
+	)
 	pb.RegisterRemoteDesktopServer(grpcServer, b)
 
 	go func() {
-		log.Printf("🚀 gRPC Broker listening on ALL INTERFACES (%s) [Target Server IP: %s:%s]", grpcAddr, serverIP, grpcPort)
+		log.Printf("🚀 High-Throughput gRPC Broker listening on ALL INTERFACES (%s) [Target Server IP: %s:%s]", grpcAddr, serverIP, grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
 		}
