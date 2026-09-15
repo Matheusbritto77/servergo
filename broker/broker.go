@@ -155,6 +155,14 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 	b.clients[clientID] = client
 	log.Printf("⚡ [SERVER ID GENERATOR] Generated & Registered Client ID: %s for host (%s - %s - IP: %s)", clientID, req.GetMachineName(), req.GetOsInfo(), remoteIP)
 
+	// Pre-register fallback UDP peer route for hostStreamID in Nexus relay using gRPC remote IP
+	if b.nexusRelay != nil && remoteIP != "" {
+		hostStreamID := nexusCoreSessionStreamID(clientID, false)
+		if udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:50052", remoteIP)); err == nil {
+			b.nexusRelay.RegisterPeer(hostStreamID, udpAddr)
+		}
+	}
+
 	return &pb.RegisterResponse{
 		Success:      true,
 		ClientId:     clientID,

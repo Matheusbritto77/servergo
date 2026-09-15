@@ -155,6 +155,19 @@ func (s *NexusRelayServer) cleanupLoop() {
 	}
 }
 
+// RegisterPeer pre-registers or updates a stream_id -> UDP address route in the peer map.
+func (s *NexusRelayServer) RegisterPeer(streamID uint32, addr *net.UDPAddr) {
+	if addr == nil {
+		return
+	}
+	s.peersMutex.Lock()
+	defer s.peersMutex.Unlock()
+	s.peerMap[streamID] = nexusPeer{
+		addr:     addr,
+		lastSeen: time.Now(),
+	}
+}
+
 // SendToStream sends a raw Nexus frame to the peer registered under the given stream_id.
 // Returns true if the peer was found and the frame was dispatched.
 func (s *NexusRelayServer) SendToStream(streamID uint32, data []byte) bool {
