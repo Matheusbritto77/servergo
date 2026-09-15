@@ -19,7 +19,8 @@ WORKDIR /app
 
 COPY --from=builder /app/servergo /app/servergo
 
-EXPOSE 50051 8090
+# Expose HTTP Web Dashboard (8090) first for PaaS HTTP router (Coolify / Traefik), then gRPC (50051)
+EXPOSE 8090 50051
 
 ENV SERVER_IP=209.126.81.68
 ENV GRPC_PORT=50051

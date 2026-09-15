@@ -22,7 +22,11 @@ func main() {
 	grpcPort := strings.TrimPrefix(rawGrpcPort, ":")
 	grpcAddr := fmt.Sprintf("0.0.0.0:%s", grpcPort)
 
-	rawWebPort := os.Getenv("WEB_PORT")
+	// PaaS platforms like Coolify / Heroku pass the main web HTTP port via PORT env var
+	rawWebPort := os.Getenv("PORT")
+	if rawWebPort == "" {
+		rawWebPort = os.Getenv("WEB_PORT")
+	}
 	if rawWebPort == "" {
 		rawWebPort = "8090"
 	}
@@ -39,7 +43,7 @@ func main() {
 	// 1. Initialize Broker
 	b := broker.NewBroker()
 
-	// 2. Start gRPC Server explicitly on 0.0.0.0:50051 (all network interfaces)
+	// 2. Start gRPC Server on 0.0.0.0:50051
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on gRPC address %s: %v", grpcAddr, err)
@@ -55,7 +59,7 @@ func main() {
 		}
 	}()
 
-	// 3. Start Web Dashboard HTTP Server explicitly on 0.0.0.0:8090 (all network interfaces)
+	// 3. Start Web Dashboard HTTP Server on 0.0.0.0:8090 (or PORT env)
 	webServer := web.NewWebServer(b)
 	log.Printf("🌐 Web Dashboard listening on ALL INTERFACES (http://%s) [Target Server IP: http://%s:%s]", webAddr, serverIP, webPort)
 	if err := webServer.Start(webAddr); err != nil {
