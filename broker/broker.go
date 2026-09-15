@@ -290,7 +290,7 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 	}
 
 	subID := fmt.Sprintf("sub_%d", time.Now().UnixNano())
-	frameChan := make(chan *pb.HostMessage, 512)
+	frameChan := make(chan *pb.HostMessage, 4)
 
 	client.mu.Lock()
 	client.subscribers[subID] = frameChan
