@@ -19,7 +19,8 @@ import (
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	log.Printf("⚡ High-Performance Core Initialized: GOMAXPROCS = %d", runtime.NumCPU())
+	log.Printf("⚡ High-Performance Multi-Core Engine Initialized: GOMAXPROCS = %d", runtime.NumCPU())
+
 	rawGrpcPort := os.Getenv("GRPC_PORT")
 	if rawGrpcPort == "" {
 		rawGrpcPort = "50051"
@@ -48,7 +49,7 @@ func main() {
 	// 1. Initialize Broker
 	b := broker.NewBroker()
 
-	// 2. Start gRPC Server on 0.0.0.0:50051 with High-Throughput Keepalive & Window Tuning
+	// 2. Start gRPC Server on 0.0.0.0:50051 with 6-Channel High-Throughput Window Tuning
 	lis, err := net.Listen("tcp", grpcAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on gRPC address %s: %v", grpcAddr, err)
@@ -70,27 +71,16 @@ func main() {
 		grpc.KeepaliveEnforcementPolicy(kaEnforce),
 		grpc.MaxRecvMsgSize(32*1024*1024),
 		grpc.MaxSendMsgSize(32*1024*1024),
-		grpc.InitialWindowSize(4*1024*1024),
-		grpc.InitialConnWindowSize(8*1024*1024),
+		grpc.InitialWindowSize(8*1024*1024),
+		grpc.InitialConnWindowSize(16*1024*1024),
+		grpc.MaxConcurrentStreams(1000),
 	)
 	pb.RegisterRemoteDesktopServer(grpcServer, b)
 
 	go func() {
-		log.Printf("🚀 High-Throughput gRPC Broker listening on ALL INTERFACES (%s) [Target Server IP: %s:%s]", grpcAddr, serverIP, grpcPort)
+		log.Printf("🚀 6-Channel High-Throughput gRPC Broker listening on ALL INTERFACES (%s) [Target Server IP: %s:%s]", grpcAddr, serverIP, grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("gRPC server error: %v", err)
-		}
-	}()
-
-	// 2.5 Create NEXUS-P2P Custom Protocol Relay Engine on UDP 0.0.0.0:50052
-	nexusServer := broker.NewNexusRelayServer(50052)
-
-	// Connect broker to the Nexus relay for dispatching Control frames to host peers.
-	b.SetNexusRelay(nexusServer)
-
-	go func() {
-		if err := nexusServer.Start(); err != nil {
-			log.Printf("[NEXUS] Failed to start NEXUS UDP server: %v", err)
 		}
 	}()
 

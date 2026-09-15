@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.3.0
 // - protoc             v7.36.1
-// source: proto/remote.proto
+// source: remote.proto
 
 package remotedesktop
 
@@ -19,16 +19,30 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	RemoteDesktop_RegisterClient_FullMethodName      = "/remotedesktop.RemoteDesktop/RegisterClient"
-	RemoteDesktop_AuthenticateControl_FullMethodName = "/remotedesktop.RemoteDesktop/AuthenticateControl"
-	RemoteDesktop_CheckUpdate_FullMethodName         = "/remotedesktop.RemoteDesktop/CheckUpdate"
+	RemoteDesktop_RegisterClient_FullMethodName       = "/remotedesktop.RemoteDesktop/RegisterClient"
+	RemoteDesktop_AuthenticateControl_FullMethodName  = "/remotedesktop.RemoteDesktop/AuthenticateControl"
+	RemoteDesktop_CheckUpdate_FullMethodName          = "/remotedesktop.RemoteDesktop/CheckUpdate"
+	RemoteDesktop_VideoStream_FullMethodName          = "/remotedesktop.RemoteDesktop/VideoStream"
+	RemoteDesktop_InputStream_FullMethodName          = "/remotedesktop.RemoteDesktop/InputStream"
+	RemoteDesktop_ControlCommandStream_FullMethodName = "/remotedesktop.RemoteDesktop/ControlCommandStream"
 )
 
 // RemoteDesktopClient is the client API for RemoteDesktop service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type RemoteDesktopClient interface {
+	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
+	// Auto-Update service check
 	CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error)
+	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream & Control (Host <-> Broker <-> Operator)
+	VideoStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_VideoStreamClient, error)
+	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator <-> Broker <-> Host)
+	InputStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_InputStreamClient, error)
+	// Channel 5 & 6: Control Commands, ConnectRequest & HostStatus Stream (Host <-> Broker <-> Operator)
+	ControlCommandStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlCommandStreamClient, error)
 }
 
 type remoteDesktopClient struct {
@@ -66,11 +80,115 @@ func (c *remoteDesktopClient) CheckUpdate(ctx context.Context, in *UpdateCheckRe
 	return out, nil
 }
 
+func (c *remoteDesktopClient) VideoStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_VideoStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[0], RemoteDesktop_VideoStream_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &remoteDesktopVideoStreamClient{stream}
+	return x, nil
+}
+
+type RemoteDesktop_VideoStreamClient interface {
+	Send(*VideoControlCommand) error
+	Recv() (*VideoFrame, error)
+	grpc.ClientStream
+}
+
+type remoteDesktopVideoStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *remoteDesktopVideoStreamClient) Send(m *VideoControlCommand) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *remoteDesktopVideoStreamClient) Recv() (*VideoFrame, error) {
+	m := new(VideoFrame)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *remoteDesktopClient) InputStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_InputStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[1], RemoteDesktop_InputStream_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &remoteDesktopInputStreamClient{stream}
+	return x, nil
+}
+
+type RemoteDesktop_InputStreamClient interface {
+	Send(*InputEvent) error
+	Recv() (*InputAck, error)
+	grpc.ClientStream
+}
+
+type remoteDesktopInputStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *remoteDesktopInputStreamClient) Send(m *InputEvent) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *remoteDesktopInputStreamClient) Recv() (*InputAck, error) {
+	m := new(InputAck)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *remoteDesktopClient) ControlCommandStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlCommandStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &RemoteDesktop_ServiceDesc.Streams[2], RemoteDesktop_ControlCommandStream_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &remoteDesktopControlCommandStreamClient{stream}
+	return x, nil
+}
+
+type RemoteDesktop_ControlCommandStreamClient interface {
+	Send(*ControlMessage) error
+	Recv() (*ControlMessage, error)
+	grpc.ClientStream
+}
+
+type remoteDesktopControlCommandStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *remoteDesktopControlCommandStreamClient) Send(m *ControlMessage) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *remoteDesktopControlCommandStreamClient) Recv() (*ControlMessage, error) {
+	m := new(ControlMessage)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // RemoteDesktopServer is the server API for RemoteDesktop service.
+// All implementations must embed UnimplementedRemoteDesktopServer
+// for forward compatibility
 type RemoteDesktopServer interface {
+	// Register client agent host (Server generates and returns unique 9-digit Client ID)
 	RegisterClient(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	// Authenticate operator control client by Target Client ID
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
+	// Auto-Update service check
 	CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error)
+	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream & Control (Host <-> Broker <-> Operator)
+	VideoStream(RemoteDesktop_VideoStreamServer) error
+	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator <-> Broker <-> Host)
+	InputStream(RemoteDesktop_InputStreamServer) error
+	// Channel 5 & 6: Control Commands, ConnectRequest & HostStatus Stream (Host <-> Broker <-> Operator)
+	ControlCommandStream(RemoteDesktop_ControlCommandStreamServer) error
 	mustEmbedUnimplementedRemoteDesktopServer()
 }
 
@@ -87,9 +205,20 @@ func (UnimplementedRemoteDesktopServer) AuthenticateControl(context.Context, *Au
 func (UnimplementedRemoteDesktopServer) CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CheckUpdate not implemented")
 }
+func (UnimplementedRemoteDesktopServer) VideoStream(RemoteDesktop_VideoStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method VideoStream not implemented")
+}
+func (UnimplementedRemoteDesktopServer) InputStream(RemoteDesktop_InputStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method InputStream not implemented")
+}
+func (UnimplementedRemoteDesktopServer) ControlCommandStream(RemoteDesktop_ControlCommandStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method ControlCommandStream not implemented")
+}
 func (UnimplementedRemoteDesktopServer) mustEmbedUnimplementedRemoteDesktopServer() {}
 
 // UnsafeRemoteDesktopServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RemoteDesktopServer will
+// result in compilation errors.
 type UnsafeRemoteDesktopServer interface {
 	mustEmbedUnimplementedRemoteDesktopServer()
 }
@@ -152,7 +281,87 @@ func _RemoteDesktop_CheckUpdate_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RemoteDesktop_VideoStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RemoteDesktopServer).VideoStream(&remoteDesktopVideoStreamServer{stream})
+}
+
+type RemoteDesktop_VideoStreamServer interface {
+	Send(*VideoFrame) error
+	Recv() (*VideoControlCommand, error)
+	grpc.ServerStream
+}
+
+type remoteDesktopVideoStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *remoteDesktopVideoStreamServer) Send(m *VideoFrame) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *remoteDesktopVideoStreamServer) Recv() (*VideoControlCommand, error) {
+	m := new(VideoControlCommand)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _RemoteDesktop_InputStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RemoteDesktopServer).InputStream(&remoteDesktopInputStreamServer{stream})
+}
+
+type RemoteDesktop_InputStreamServer interface {
+	Send(*InputAck) error
+	Recv() (*InputEvent, error)
+	grpc.ServerStream
+}
+
+type remoteDesktopInputStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *remoteDesktopInputStreamServer) Send(m *InputAck) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *remoteDesktopInputStreamServer) Recv() (*InputEvent, error) {
+	m := new(InputEvent)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _RemoteDesktop_ControlCommandStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(RemoteDesktopServer).ControlCommandStream(&remoteDesktopControlCommandStreamServer{stream})
+}
+
+type RemoteDesktop_ControlCommandStreamServer interface {
+	Send(*ControlMessage) error
+	Recv() (*ControlMessage, error)
+	grpc.ServerStream
+}
+
+type remoteDesktopControlCommandStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *remoteDesktopControlCommandStreamServer) Send(m *ControlMessage) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *remoteDesktopControlCommandStreamServer) Recv() (*ControlMessage, error) {
+	m := new(ControlMessage)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // RemoteDesktop_ServiceDesc is the grpc.ServiceDesc for RemoteDesktop service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
 var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "remotedesktop.RemoteDesktop",
 	HandlerType: (*RemoteDesktopServer)(nil),
@@ -170,6 +379,25 @@ var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RemoteDesktop_CheckUpdate_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/remote.proto",
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "VideoStream",
+			Handler:       _RemoteDesktop_VideoStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "InputStream",
+			Handler:       _RemoteDesktop_InputStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ControlCommandStream",
+			Handler:       _RemoteDesktop_ControlCommandStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "remote.proto",
 }
