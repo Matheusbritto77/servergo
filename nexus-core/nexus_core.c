@@ -102,6 +102,29 @@ uint32_t nexus_core_session_stream_id(const uint8_t *data, size_t len, int is_op
     return is_operator ? base + 1u : base;
 }
 
+uint32_t nexus_core_pair_stream_id(uint32_t stream_id) {
+    return stream_id ^ 1u;
+}
+
+int nexus_core_route_action(uint8_t frame_type) {
+    switch (frame_type) {
+    case NEXUS_CORE_TYPE_KNOCK:
+        return NEXUS_CORE_ROUTE_KNOCK_RESPONSE;
+    case NEXUS_CORE_TYPE_SIGNAL:
+    case NEXUS_CORE_TYPE_VIDEO:
+    case NEXUS_CORE_TYPE_INPUT:
+    case NEXUS_CORE_TYPE_KEEPALIVE:
+    case NEXUS_CORE_TYPE_SYNC_KEYFRAME:
+    case NEXUS_CORE_TYPE_ACK:
+    case NEXUS_CORE_TYPE_NACK:
+    case NEXUS_CORE_TYPE_PATH_CHALLENGE:
+    case NEXUS_CORE_TYPE_PATH_RESPONSE:
+        return NEXUS_CORE_ROUTE_RELAY;
+    default:
+        return NEXUS_CORE_ROUTE_DROP;
+    }
+}
+
 int nexus_core_decode(const uint8_t *data, size_t len, nexus_core_header *out) {
     if (!data || !out || len < NEXUS_CORE_HEADER_LEN) {
         return -1;
@@ -209,6 +232,22 @@ int nexus_core_pack_ack(uint32_t stream_id,
                                  ack_num,
                                  ack_bits,
                                  0,
+                                 NULL,
+                                 0,
+                                 out,
+                                 out_len);
+}
+
+int nexus_core_pack_knock_response(const nexus_core_header *request, uint8_t *out, size_t out_len) {
+    if (!request) {
+        return -1;
+    }
+    return nexus_core_pack_frame(NEXUS_CORE_TYPE_KNOCK,
+                                 request->stream_id,
+                                 request->seq_num,
+                                 request->seq_num,
+                                 0,
+                                 request->path_id,
                                  NULL,
                                  0,
                                  out,

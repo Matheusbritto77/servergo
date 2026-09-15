@@ -36,6 +36,10 @@ extern "C" {
 #define NEXUS_CORE_CHANNEL_INPUT 2
 #define NEXUS_CORE_CHANNEL_PROBE 3
 
+#define NEXUS_CORE_ROUTE_DROP 0
+#define NEXUS_CORE_ROUTE_KNOCK_RESPONSE 1
+#define NEXUS_CORE_ROUTE_RELAY 2
+
 typedef struct nexus_core_header {
     uint8_t version;
     uint8_t frame_type;
@@ -67,6 +71,8 @@ uint8_t nexus_core_channel_for_type(uint8_t frame_type);
 uint16_t nexus_core_flags_for_type(uint8_t frame_type);
 uint32_t nexus_core_now_ms(void);
 uint32_t nexus_core_session_stream_id(const uint8_t *data, size_t len, int is_operator);
+uint32_t nexus_core_pair_stream_id(uint32_t stream_id);
+int nexus_core_route_action(uint8_t frame_type);
 
 int nexus_core_decode(const uint8_t *data, size_t len, nexus_core_header *out);
 int nexus_core_encode(const nexus_core_header *header, uint8_t *out, size_t len);
@@ -86,6 +92,7 @@ int nexus_core_pack_ack(uint32_t stream_id,
                         uint32_t ack_bits,
                         uint8_t *out,
                         size_t out_len);
+int nexus_core_pack_knock_response(const nexus_core_header *request, uint8_t *out, size_t out_len);
 
 int nexus_core_chunk_encode(const nexus_core_chunk_header *header, uint8_t *out, size_t len);
 int nexus_core_chunk_decode(const uint8_t *data, size_t len, nexus_core_chunk_header *out);

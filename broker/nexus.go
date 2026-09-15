@@ -87,19 +87,12 @@ func (s *NexusRelayServer) listenLoop() {
 		}
 		s.peersMutex.Unlock()
 
-		switch hdr.frame_type {
-		case C.NEXUS_CORE_TYPE_KNOCK:
+		switch C.nexus_core_route_action(hdr.frame_type) {
+		case C.NEXUS_CORE_ROUTE_KNOCK_RESPONSE:
 			// NAT Hole Punching Knock Probe - Echo back reflected endpoint
 			resp := make([]byte, int(C.NEXUS_CORE_HEADER_LEN))
-			respLen := C.nexus_core_pack_frame(
-				C.NEXUS_CORE_TYPE_KNOCK,
-				hdr.stream_id,
-				hdr.seq_num,
-				hdr.seq_num,
-				0,
-				0,
-				nil,
-				0,
+			respLen := C.nexus_core_pack_knock_response(
+				&hdr,
 				(*C.uint8_t)(unsafe.Pointer(&resp[0])),
 				C.size_t(len(resp)),
 			)
@@ -107,12 +100,9 @@ func (s *NexusRelayServer) listenLoop() {
 				_, _ = s.conn.WriteToUDP(resp[:int(respLen)], remoteAddr)
 			}
 
-		case C.NEXUS_CORE_TYPE_VIDEO, C.NEXUS_CORE_TYPE_INPUT, C.NEXUS_CORE_TYPE_SIGNAL,
-			C.NEXUS_CORE_TYPE_SYNC_KEYFRAME, C.NEXUS_CORE_TYPE_KEEPALIVE,
-			C.NEXUS_CORE_TYPE_ACK, C.NEXUS_CORE_TYPE_NACK,
-			C.NEXUS_CORE_TYPE_PATH_CHALLENGE, C.NEXUS_CORE_TYPE_PATH_RESPONSE:
+		case C.NEXUS_CORE_ROUTE_RELAY:
 			// Low-latency O(1) datagram forwarding to paired peer endpoint (StreamID ^ 1)
-			targetStreamID := uint32(hdr.stream_id) ^ 1
+			targetStreamID := uint32(C.nexus_core_pair_stream_id(hdr.stream_id))
 			s.peersMutex.RLock()
 			targetPeer, exists := s.peerMap[targetStreamID]
 			s.peersMutex.RUnlock()
