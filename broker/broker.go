@@ -326,7 +326,7 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 	}()
 
 	go func() {
-		if firstMsg.GetInputEvent() != nil || firstMsg.GetCommand() != nil {
+		if firstMsg.GetInputEvent() != nil || firstMsg.GetCommand() != nil || firstMsg.GetWebrtcSignal() != nil {
 			client.HostControlChan <- firstMsg
 		}
 
