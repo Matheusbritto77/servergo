@@ -19,7 +19,6 @@ func NewWebServer(b *broker.Broker) *WebServer {
 func (ws *WebServer) Start(addr string) error {
 	mux := http.NewServeMux()
 
-	// Static downloads directory for Client and Control binaries
 	downloadsDir := "./downloads"
 	_ = os.MkdirAll(downloadsDir, 0755)
 	fileServer := http.FileServer(http.Dir(downloadsDir))
@@ -54,7 +53,7 @@ func (ws *WebServer) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		ext = ".exe"
 	}
 
-	downloadURL := fmt.Sprintf("http://209.126.81.68:8080/downloads/remote-%s%s", component, ext)
+	downloadURL := fmt.Sprintf("http://209.126.81.68:8090/downloads/remote-%s%s", component, ext)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"update_available": updateAvailable,
@@ -106,7 +105,7 @@ func (ws *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
     <div class="container">
         <header>
             <div class="logo">⚡ Remote Desktop Broker</div>
-            <div class="badge">gRPC: :50051 | Web: :8080 | Auto-Updater Ready</div>
+            <div class="badge">gRPC: :50051 | Web: :8090 | Auto-Updater Ready</div>
         </header>
 
         <div class="grid">

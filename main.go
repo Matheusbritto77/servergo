@@ -23,7 +23,7 @@ func main() {
 
 	webPort := os.Getenv("WEB_PORT")
 	if webPort == "" {
-		webPort = "8080"
+		webPort = "8090"
 	}
 	if webPort[0] != ':' {
 		webPort = ":" + webPort
@@ -39,7 +39,7 @@ func main() {
 	// 1. Initialize Broker
 	b := broker.NewBroker()
 
-	// 2. Start gRPC Server on 0.0.0.0:50051 (all interfaces)
+	// 2. Start gRPC Server on 0.0.0.0:50051
 	lis, err := net.Listen("tcp", "0.0.0.0"+grpcPort)
 	if err != nil {
 		log.Fatalf("Failed to listen on gRPC port %s: %v", grpcPort, err)
@@ -55,7 +55,7 @@ func main() {
 		}
 	}()
 
-	// 3. Start Web Dashboard HTTP Server on 0.0.0.0:8080 (all interfaces)
+	// 3. Start Web Dashboard HTTP Server on 0.0.0.0:8090
 	webServer := web.NewWebServer(b)
 	log.Printf("🌐 Web Dashboard listening on http://0.0.0.0%s (Target Server IP: http://%s%s)", webPort, serverIP, webPort)
 	if err := webServer.Start("0.0.0.0" + webPort); err != nil {
