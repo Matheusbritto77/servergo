@@ -126,7 +126,7 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 		MachineName:     req.GetMachineName(),
 		OSInfo:          req.GetOsInfo(),
 		RegisteredAt:    time.Now(),
-		HostControlChan: make(chan *pb.ControlMessage, 256),
+		HostControlChan: make(chan *pb.ControlMessage, 512),
 		subscribers:     make(map[string]chan *pb.HostMessage),
 	}
 
@@ -245,6 +245,15 @@ func (b *Broker) broadcastToSubscribers(client *ActiveClient, msg *pb.HostMessag
 		select {
 		case subChan <- msg:
 		default:
+			// Non-blocking zero-lag strategy: drop oldest frame and insert latest frame immediately
+			select {
+			case <-subChan:
+			default:
+			}
+			select {
+			case subChan <- msg:
+			default:
+			}
 		}
 	}
 }
@@ -265,7 +274,7 @@ func (b *Broker) ControlStream(stream pb.RemoteDesktop_ControlStreamServer) erro
 	}
 
 	subID := fmt.Sprintf("sub_%d", time.Now().UnixNano())
-	frameChan := make(chan *pb.HostMessage, 128)
+	frameChan := make(chan *pb.HostMessage, 512)
 
 	client.mu.Lock()
 	client.subscribers[subID] = frameChan
