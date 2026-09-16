@@ -13,6 +13,7 @@ import (
 
 	pb "server-web/proto/remotedesktop"
 
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
 
@@ -166,7 +167,6 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 	}
 
 	sessionID := fmt.Sprintf("sess_%s_%d", client.ClientID, time.Now().UnixNano())
-	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (IP: %s)", req.GetOperatorName(), client.ClientID, client.RemoteIP)
 
 	// Dispatch ConnectRequest to Host via ControlCommandStream
 	msg := &pb.ControlMessage{
@@ -179,6 +179,11 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 		},
 	}
 	b.BroadcastControlMessage(client.ClientID, msg)
+
+	client.controlSubMutex.RLock()
+	subCount := len(client.controlSubscribers)
+	client.controlSubMutex.RUnlock()
+	log.Printf("🔗 [BROKER] Direct connection request from operator '%s' to Client ID '%s' (IP: %s) -> Dispatched to %d active subscribers", req.GetOperatorName(), client.ClientID, client.RemoteIP, subCount)
 
 	return &pb.AuthResponse{
 		Success:   true,
@@ -280,6 +285,8 @@ func (b *Broker) BroadcastInputEvent(clientID string, event *pb.InputEvent) {
 
 // Channel 5 & 6: ControlCommandStream (Bidirectional control messages between Host, Broker, and Operator)
 func (b *Broker) ControlCommandStream(stream pb.RemoteDesktop_ControlCommandStreamServer) error {
+	_ = stream.SendHeader(metadata.MD{})
+
 	var clientID string
 	var ch chan *pb.ControlMessage
 	done := make(chan struct{})
@@ -311,7 +318,10 @@ func (b *Broker) ControlCommandStream(stream pb.RemoteDesktop_ControlCommandStre
 			if client, exists := b.findClient(clientID); exists {
 				client.controlSubMutex.Lock()
 				client.controlSubscribers[ch] = true
+				subCount := len(client.controlSubscribers)
 				client.controlSubMutex.Unlock()
+
+				log.Printf("📡 [BROKER] ControlCommandStream subscriber registered for Client ID: %s (Active subscribers: %d)", clientID, subCount)
 
 				go func(subscriberChan chan *pb.ControlMessage) {
 					for {
