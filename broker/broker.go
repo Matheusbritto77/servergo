@@ -2,11 +2,13 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -39,15 +41,42 @@ type ActiveClient struct {
 
 type Broker struct {
 	pb.UnimplementedRemoteDesktopServer
-	mu      sync.RWMutex
-	clients map[string]*ActiveClient
-	rnd     *rand.Rand
+	mu          sync.RWMutex
+	clients     map[string]*ActiveClient
+	machineToID map[string]string // hardwareID -> clientID (AnyDesk-style permanent ID)
+	idToMachine map[string]string // clientID -> hardwareID
+	rnd         *rand.Rand
 }
 
 func NewBroker() *Broker {
-	return &Broker{
-		clients: make(map[string]*ActiveClient),
-		rnd:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	b := &Broker{
+		clients:     make(map[string]*ActiveClient),
+		machineToID: make(map[string]string),
+		idToMachine: make(map[string]string),
+		rnd:         rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	b.loadMachineMappings()
+	return b
+}
+
+func (b *Broker) loadMachineMappings() {
+	data, err := os.ReadFile("machine_ids.json")
+	if err == nil {
+		var mappings map[string]string
+		if err := json.Unmarshal(data, &mappings); err == nil {
+			for hw, id := range mappings {
+				b.machineToID[hw] = id
+				b.idToMachine[id] = hw
+			}
+			log.Printf("📦 [PERSISTENT ID] Loaded %d machine ID mappings from machine_ids.json", len(b.machineToID))
+		}
+	}
+}
+
+func (b *Broker) saveMachineMappings() {
+	data, err := json.MarshalIndent(b.machineToID, "", "  ")
+	if err == nil {
+		_ = os.WriteFile("machine_ids.json", data, 0644)
 	}
 }
 
@@ -84,10 +113,11 @@ func (b *Broker) ListClients() []ClientInfo {
 }
 
 func (b *Broker) normalizeClientID(id string) string {
+	id = strings.TrimSpace(id)
 	if strings.HasPrefix(id, "sess_") {
 		parts := strings.Split(id, "_")
 		if len(parts) >= 2 {
-			return parts[1]
+			id = parts[1]
 		}
 	}
 	return id
@@ -97,8 +127,18 @@ func (b *Broker) findClient(clientID string) (*ActiveClient, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	id := b.normalizeClientID(clientID)
-	c, exists := b.clients[id]
-	return c, exists
+	if c, exists := b.clients[id]; exists {
+		return c, true
+	}
+	// Also fallback to comparing without hyphens and spaces
+	cleanInput := strings.ReplaceAll(strings.ReplaceAll(id, "-", ""), " ", "")
+	for cid, c := range b.clients {
+		cleanCid := strings.ReplaceAll(strings.ReplaceAll(cid, "-", ""), " ", "")
+		if cleanInput == cleanCid {
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 func (b *Broker) CheckUpdate(ctx context.Context, req *pb.UpdateCheckRequest) (*pb.UpdateCheckResponse, error) {
@@ -122,7 +162,48 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	clientID := b.generateUniqueID()
+	var hwID string
+	var preferredID string
+
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("x-hardware-id"); len(vals) > 0 {
+			hwID = strings.TrimSpace(vals[0])
+		}
+		if vals := md.Get("x-preferred-id"); len(vals) > 0 {
+			preferredID = strings.TrimSpace(vals[0])
+		}
+	}
+
+	if hwID == "" {
+		hwID = strings.TrimSpace(req.GetMachineName())
+	}
+
+	var clientID string
+
+	// 1. Check if hardware_id already has a registered permanent ID
+	if existingID, ok := b.machineToID[hwID]; ok && existingID != "" {
+		clientID = existingID
+		log.Printf("⚡ [PERSISTENT ID] Hardware ID '%s' recognized! Preserving permanent Client ID: %s", hwID, clientID)
+	} else if preferredID != "" {
+		// 2. Check if preferred ID was requested and is available or belongs to this machine
+		owner, taken := b.idToMachine[preferredID]
+		if !taken || owner == hwID {
+			clientID = preferredID
+			b.machineToID[hwID] = clientID
+			b.idToMachine[clientID] = hwID
+			b.saveMachineMappings()
+			log.Printf("⚡ [PERSISTENT ID] Preserved preferred Client ID: %s for machine: %s", clientID, hwID)
+		}
+	}
+
+	// 3. First-time registration: generate a new unique 9-digit ID
+	if clientID == "" {
+		clientID = b.generateUniqueID()
+		b.machineToID[hwID] = clientID
+		b.idToMachine[clientID] = hwID
+		b.saveMachineMappings()
+		log.Printf("⚡ [PERSISTENT ID] First registration for machine '%s'! Generated permanent Client ID: %s", hwID, clientID)
+	}
 
 	var remoteIP string
 	if pr, ok := peer.FromContext(ctx); ok && pr.Addr != nil {
@@ -134,21 +215,30 @@ func (b *Broker) RegisterClient(ctx context.Context, req *pb.RegisterRequest) (*
 		}
 	}
 
-	client := &ActiveClient{
-		ClientID:           clientID,
-		MachineName:        req.GetMachineName(),
-		OSInfo:             req.GetOsInfo(),
-		RemoteIP:           remoteIP,
-		RegisteredAt:       time.Now(),
-		videoSubscribers:   make(map[chan *pb.VideoFrame]bool),
-		videoControlChan:   make(chan *pb.VideoControlCommand, 128),
-		inputSubscribers:   make(map[chan *pb.InputEvent]bool),
-		inputAckChan:       make(chan *pb.InputAck, 128),
-		controlSubscribers: make(map[chan *pb.ControlMessage]bool),
+	// 4. Update in-place if client already exists (e.g. reconnect during active session or after momentary network drop)
+	// This ensures the connection/subscribers are NOT disrupted and ID NEVER changes mid-session!
+	if existingClient, exists := b.clients[clientID]; exists && existingClient != nil {
+		existingClient.MachineName = req.GetMachineName()
+		existingClient.OSInfo = req.GetOsInfo()
+		existingClient.RemoteIP = remoteIP
+		existingClient.RegisteredAt = time.Now()
+		log.Printf("🔄 [CLIENT RECONNECT] Client ID %s re-registered in-place (IP: %s) - Active session & subscribers preserved!", clientID, remoteIP)
+	} else {
+		client := &ActiveClient{
+			ClientID:           clientID,
+			MachineName:        req.GetMachineName(),
+			OSInfo:             req.GetOsInfo(),
+			RemoteIP:           remoteIP,
+			RegisteredAt:       time.Now(),
+			videoSubscribers:   make(map[chan *pb.VideoFrame]bool),
+			videoControlChan:   make(chan *pb.VideoControlCommand, 128),
+			inputSubscribers:   make(map[chan *pb.InputEvent]bool),
+			inputAckChan:       make(chan *pb.InputAck, 128),
+			controlSubscribers: make(map[chan *pb.ControlMessage]bool),
+		}
+		b.clients[clientID] = client
+		log.Printf("⚡ [ACTIVE CLIENT] Registered Client ID: %s for host (%s - %s - IP: %s)", clientID, req.GetMachineName(), req.GetOsInfo(), remoteIP)
 	}
-
-	b.clients[clientID] = client
-	log.Printf("⚡ [SERVER ID GENERATOR] Generated & Registered Client ID: %s for host (%s - %s - IP: %s)", clientID, req.GetMachineName(), req.GetOsInfo(), remoteIP)
 
 	return &pb.RegisterResponse{
 		Success:      true,
