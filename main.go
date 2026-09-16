@@ -69,12 +69,12 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.KeepaliveParams(kaParams),
 		grpc.KeepaliveEnforcementPolicy(kaEnforce),
-		grpc.MaxRecvMsgSize(4*1024*1024),
-		grpc.MaxSendMsgSize(4*1024*1024),
-		grpc.ReadBufferSize(4*1024*1024),
-		grpc.WriteBufferSize(4*1024*1024),
-		grpc.InitialWindowSize(4*1024*1024),
-		grpc.InitialConnWindowSize(4*1024*1024),
+		grpc.MaxRecvMsgSize(16*1024*1024),
+		grpc.MaxSendMsgSize(16*1024*1024),
+		grpc.ReadBufferSize(8*1024*1024),
+		grpc.WriteBufferSize(8*1024*1024),
+		grpc.InitialWindowSize(8*1024*1024),
+		grpc.InitialConnWindowSize(16*1024*1024),
 		grpc.MaxConcurrentStreams(1000),
 	)
 	pb.RegisterRemoteDesktopServer(grpcServer, b)

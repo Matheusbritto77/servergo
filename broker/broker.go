@@ -232,7 +232,7 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 		}
 
 		if ch == nil && registeredID != "" {
-			ch = make(chan *pb.VideoFrame, 8)
+			ch = make(chan *pb.VideoFrame, 16)
 			if client, exists := b.findClient(registeredID); exists {
 				client.videoSubMutex.Lock()
 				client.videoSubscribers[ch] = true
