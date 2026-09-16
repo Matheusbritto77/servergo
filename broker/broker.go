@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -59,8 +60,20 @@ func NewBroker() *Broker {
 	return b
 }
 
+func getStoragePath() string {
+	if dir := os.Getenv("DATA_DIR"); dir != "" {
+		_ = os.MkdirAll(dir, 0755)
+		return filepath.Join(dir, "machine_ids.json")
+	}
+	if _, err := os.Stat("data"); err == nil {
+		return filepath.Join("data", "machine_ids.json")
+	}
+	return "machine_ids.json"
+}
+
 func (b *Broker) loadMachineMappings() {
-	data, err := os.ReadFile("machine_ids.json")
+	path := getStoragePath()
+	data, err := os.ReadFile(path)
 	if err == nil {
 		var mappings map[string]string
 		if err := json.Unmarshal(data, &mappings); err == nil {
@@ -68,15 +81,16 @@ func (b *Broker) loadMachineMappings() {
 				b.machineToID[hw] = id
 				b.idToMachine[id] = hw
 			}
-			log.Printf("📦 [PERSISTENT ID] Loaded %d machine ID mappings from machine_ids.json", len(b.machineToID))
+			log.Printf("📦 [PERSISTENT ID] Loaded %d machine ID mappings from %s", len(b.machineToID), path)
 		}
 	}
 }
 
 func (b *Broker) saveMachineMappings() {
+	path := getStoragePath()
 	data, err := json.MarshalIndent(b.machineToID, "", "  ")
 	if err == nil {
-		_ = os.WriteFile("machine_ids.json", data, 0644)
+		_ = os.WriteFile(path, data, 0644)
 	}
 }
 

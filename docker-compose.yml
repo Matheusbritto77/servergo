@@ -12,3 +12,7 @@ services:
       - SERVER_IP=209.126.81.68
       - GRPC_PORT=50051
       - WEB_PORT=8090
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data
+      - ./downloads:/app/downloads
