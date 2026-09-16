@@ -322,7 +322,7 @@ func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
 		if targetID == "" {
 			targetID = b.getFirstClientID()
 			if targetID != "" {
-				ch = make(chan *pb.InputEvent, 128)
+				ch = make(chan *pb.InputEvent, 16)
 				if client, exists := b.findClient(targetID); exists {
 					client.inputSubMutex.Lock()
 					client.inputSubscribers[ch] = true
