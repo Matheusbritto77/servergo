@@ -232,7 +232,7 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 		}
 
 		if ch == nil && registeredID != "" {
-			ch = make(chan *pb.VideoFrame, 32)
+			ch = make(chan *pb.VideoFrame, 4)
 			if client, exists := b.findClient(registeredID); exists {
 				client.videoSubMutex.Lock()
 				client.videoSubscribers[ch] = true
@@ -290,18 +290,17 @@ func (b *Broker) BroadcastVideoFrameEx(clientID string, frame *pb.VideoFrame, ex
 		if ch == excludeChan {
 			continue
 		}
-		select {
-		case ch <- frame:
-		default:
-			// Real-time ring-buffer: drop oldest frame to guarantee newest frame delivery
+		// Strict Real-Time Mode: drop older unconsumed frames so subscriber always gets the newest frame
+		for len(ch) > 0 {
 			select {
 			case <-ch:
 			default:
+				break
 			}
-			select {
-			case ch <- frame:
-			default:
-			}
+		}
+		select {
+		case ch <- frame:
+		default:
 		}
 	}
 }
