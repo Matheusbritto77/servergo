@@ -90,8 +90,8 @@ func (c *remoteDesktopClient) VideoStream(ctx context.Context, opts ...grpc.Call
 }
 
 type RemoteDesktop_VideoStreamClient interface {
-	Send(*VideoControlCommand) error
-	Recv() (*VideoFrame, error)
+	Send(*VideoFrame) error
+	Recv() (*VideoControlCommand, error)
 	grpc.ClientStream
 }
 
@@ -99,12 +99,12 @@ type remoteDesktopVideoStreamClient struct {
 	grpc.ClientStream
 }
 
-func (x *remoteDesktopVideoStreamClient) Send(m *VideoControlCommand) error {
+func (x *remoteDesktopVideoStreamClient) Send(m *VideoFrame) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *remoteDesktopVideoStreamClient) Recv() (*VideoFrame, error) {
-	m := new(VideoFrame)
+func (x *remoteDesktopVideoStreamClient) Recv() (*VideoControlCommand, error) {
+	m := new(VideoControlCommand)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -286,8 +286,8 @@ func _RemoteDesktop_VideoStream_Handler(srv interface{}, stream grpc.ServerStrea
 }
 
 type RemoteDesktop_VideoStreamServer interface {
-	Send(*VideoFrame) error
-	Recv() (*VideoControlCommand, error)
+	Send(*VideoControlCommand) error
+	Recv() (*VideoFrame, error)
 	grpc.ServerStream
 }
 
@@ -295,12 +295,12 @@ type remoteDesktopVideoStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *remoteDesktopVideoStreamServer) Send(m *VideoFrame) error {
+func (x *remoteDesktopVideoStreamServer) Send(m *VideoControlCommand) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *remoteDesktopVideoStreamServer) Recv() (*VideoControlCommand, error) {
-	m := new(VideoControlCommand)
+func (x *remoteDesktopVideoStreamServer) Recv() (*VideoFrame, error) {
+	m := new(VideoFrame)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}

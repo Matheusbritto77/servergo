@@ -176,24 +176,12 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 
 // ── 6-Channel gRPC Streaming RPC Handlers ──
 
-// Channel 1 & 2: VideoStream (Host sends VideoFrame -> Broker forwards to Operators; Operators send VideoControlCommand -> Broker forwards to Host)
+// Channel 1 & 2: VideoStream (Host streams VideoFrame -> Broker relays to Operators; Operators stream VideoControlCommand -> Broker relays to Host)
 func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
-	var clientID string
-	var videoChan chan *pb.VideoFrame
-
-	defer func() {
-		if clientID != "" && videoChan != nil {
-			if client, exists := b.findClient(clientID); exists {
-				client.videoSubMutex.Lock()
-				delete(client.videoSubscribers, videoChan)
-				client.videoSubMutex.Unlock()
-				close(videoChan)
-			}
-		}
-	}()
+	var registeredID string
 
 	for {
-		cmd, err := stream.Recv()
+		frame, err := stream.Recv()
 		if err == io.EOF {
 			return nil
 		}
@@ -201,29 +189,14 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 			return err
 		}
 
-		if clientID == "" {
-			// First control message registers subscriber stream
-			clientID = b.getFirstClientID()
-			if clientID != "" {
-				if client, exists := b.findClient(clientID); exists {
-					videoChan = make(chan *pb.VideoFrame, 64)
-					client.videoSubMutex.Lock()
-					client.videoSubscribers[videoChan] = true
-					client.videoSubMutex.Unlock()
-
-					// Spawn goroutine to relay VideoFrames from Host to Operator gRPC stream
-					go func() {
-						for frame := range videoChan {
-							if err := stream.Send(frame); err != nil {
-								return
-							}
-						}
-					}()
-				}
-			}
+		if registeredID == "" {
+			// Find active client registered
+			registeredID = b.getFirstClientID()
 		}
 
-		_ = cmd // process or log VideoControlCommand
+		if registeredID != "" {
+			b.BroadcastVideoFrame(registeredID, frame)
+		}
 	}
 }
 
@@ -254,8 +227,9 @@ func (b *Broker) BroadcastVideoFrame(clientID string, frame *pb.VideoFrame) {
 	}
 }
 
-// Channel 3 & 4: InputStream (Operators send InputEvent -> Broker forwards to Host; Host sends InputAck -> Broker forwards to Operators)
+// Channel 3 & 4: InputStream (Operators send InputEvent -> Broker forwards to Host)
 func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
+	var targetID string
 	for {
 		event, err := stream.Recv()
 		if err == io.EOF {
@@ -264,8 +238,31 @@ func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
 		if err != nil {
 			return err
 		}
-		// Route input event to host
-		_ = event
+
+		if targetID == "" {
+			targetID = b.getFirstClientID()
+		}
+
+		if targetID != "" {
+			b.BroadcastInputEvent(targetID, event)
+		}
+	}
+}
+
+func (b *Broker) BroadcastInputEvent(clientID string, event *pb.InputEvent) {
+	client, exists := b.findClient(clientID)
+	if !exists || client == nil {
+		return
+	}
+
+	client.inputSubMutex.RLock()
+	defer client.inputSubMutex.RUnlock()
+
+	for ch := range client.inputSubscribers {
+		select {
+		case ch <- event:
+		default:
+		}
 	}
 }
 
