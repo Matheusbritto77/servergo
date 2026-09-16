@@ -197,6 +197,12 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 	_ = stream.SendHeader(metadata.MD{})
 	var registeredID string
+	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
+		if vals := md.Get("x-client-id"); len(vals) > 0 {
+			registeredID = b.normalizeClientID(vals[0])
+		}
+	}
+
 	var ch chan *pb.VideoFrame
 	done := make(chan struct{})
 
@@ -223,31 +229,32 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 
 		if registeredID == "" {
 			registeredID = b.getFirstClientID()
-			if registeredID != "" {
-				ch = make(chan *pb.VideoFrame, 2)
-				if client, exists := b.findClient(registeredID); exists {
-					client.videoSubMutex.Lock()
-					client.videoSubscribers[ch] = true
-					subCount := len(client.videoSubscribers)
-					client.videoSubMutex.Unlock()
-					log.Printf("📹 [BROKER] VideoStream subscriber registered for ID: %s (Active subscribers: %d)", registeredID, subCount)
+		}
 
-					go func(subscriberChan chan *pb.VideoFrame) {
-						for {
-							select {
-							case <-done:
+		if ch == nil && registeredID != "" {
+			ch = make(chan *pb.VideoFrame, 32)
+			if client, exists := b.findClient(registeredID); exists {
+				client.videoSubMutex.Lock()
+				client.videoSubscribers[ch] = true
+				subCount := len(client.videoSubscribers)
+				client.videoSubMutex.Unlock()
+				log.Printf("📹 [BROKER] VideoStream subscriber registered for ID: %s (Active subscribers: %d)", registeredID, subCount)
+
+				go func(subscriberChan chan *pb.VideoFrame) {
+					for {
+						select {
+						case <-done:
+							return
+						case outFrame, ok := <-subscriberChan:
+							if !ok {
 								return
-							case outFrame, ok := <-subscriberChan:
-								if !ok {
-									return
-								}
-								if err := stream.Send(outFrame); err != nil {
-									return
-								}
+							}
+							if err := stream.Send(outFrame); err != nil {
+								return
 							}
 						}
-					}(ch)
-				}
+					}
+				}(ch)
 			}
 		}
 
@@ -286,7 +293,15 @@ func (b *Broker) BroadcastVideoFrameEx(clientID string, frame *pb.VideoFrame, ex
 		select {
 		case ch <- frame:
 		default:
-			// Non-blocking write: drop buffer overflow frames to guarantee 0 lag
+			// Real-time ring-buffer: drop oldest frame to guarantee newest frame delivery
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- frame:
+			default:
+			}
 		}
 	}
 }
@@ -295,6 +310,12 @@ func (b *Broker) BroadcastVideoFrameEx(clientID string, frame *pb.VideoFrame, ex
 func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
 	_ = stream.SendHeader(metadata.MD{})
 	var targetID string
+	if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
+		if vals := md.Get("x-client-id"); len(vals) > 0 {
+			targetID = b.normalizeClientID(vals[0])
+		}
+	}
+
 	var ch chan *pb.InputEvent
 	done := make(chan struct{})
 
@@ -321,31 +342,32 @@ func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
 
 		if targetID == "" {
 			targetID = b.getFirstClientID()
-			if targetID != "" {
-				ch = make(chan *pb.InputEvent, 16)
-				if client, exists := b.findClient(targetID); exists {
-					client.inputSubMutex.Lock()
-					client.inputSubscribers[ch] = true
-					subCount := len(client.inputSubscribers)
-					client.inputSubMutex.Unlock()
-					log.Printf("⌨️ [BROKER] InputStream subscriber registered for ID: %s (Active subscribers: %d)", targetID, subCount)
+		}
 
-					go func(subscriberChan chan *pb.InputEvent) {
-						for {
-							select {
-							case <-done:
+		if ch == nil && targetID != "" {
+			ch = make(chan *pb.InputEvent, 32)
+			if client, exists := b.findClient(targetID); exists {
+				client.inputSubMutex.Lock()
+				client.inputSubscribers[ch] = true
+				subCount := len(client.inputSubscribers)
+				client.inputSubMutex.Unlock()
+				log.Printf("⌨️ [BROKER] InputStream subscriber registered for ID: %s (Active subscribers: %d)", targetID, subCount)
+
+				go func(subscriberChan chan *pb.InputEvent) {
+					for {
+						select {
+						case <-done:
+							return
+						case outEv, ok := <-subscriberChan:
+							if !ok {
 								return
-							case outEv, ok := <-subscriberChan:
-								if !ok {
-									return
-								}
-								if err := stream.Send(outEv); err != nil {
-									return
-								}
+							}
+							if err := stream.Send(outEv); err != nil {
+								return
 							}
 						}
-					}(ch)
-				}
+					}
+				}(ch)
 			}
 		}
 
@@ -375,6 +397,15 @@ func (b *Broker) BroadcastInputEventEx(clientID string, event *pb.InputEvent, ex
 		select {
 		case ch <- event:
 		default:
+			// Real-time ring buffer: drop oldest event to deliver newest
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- event:
+			default:
+			}
 		}
 	}
 }
