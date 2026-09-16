@@ -290,17 +290,18 @@ func (b *Broker) BroadcastVideoFrameEx(clientID string, frame *pb.VideoFrame, ex
 		if ch == excludeChan {
 			continue
 		}
-		// Strict Real-Time Mode: drop older unconsumed frames so subscriber always gets the newest frame
-		for len(ch) > 0 {
-			select {
-			case <-ch:
-			default:
-				break
-			}
-		}
 		select {
 		case ch <- frame:
 		default:
+			// High-performance ring buffer: only drop oldest frame if buffer is completely full
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- frame:
+			default:
+			}
 		}
 	}
 }
