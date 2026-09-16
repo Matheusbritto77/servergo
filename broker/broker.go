@@ -331,13 +331,17 @@ func (b *Broker) ControlCommandStream(stream pb.RemoteDesktop_ControlCommandStre
 			}
 		}
 
-		if clientID != "" {
-			b.BroadcastControlMessage(clientID, msg)
+		if clientID != "" && msg.Payload != nil {
+			b.BroadcastControlMessageEx(clientID, msg, ch)
 		}
 	}
 }
 
 func (b *Broker) BroadcastControlMessage(clientID string, msg *pb.ControlMessage) {
+	b.BroadcastControlMessageEx(clientID, msg, nil)
+}
+
+func (b *Broker) BroadcastControlMessageEx(clientID string, msg *pb.ControlMessage, excludeChan chan *pb.ControlMessage) {
 	client, exists := b.findClient(clientID)
 	if !exists || client == nil {
 		return
@@ -347,6 +351,9 @@ func (b *Broker) BroadcastControlMessage(clientID string, msg *pb.ControlMessage
 	defer client.controlSubMutex.RUnlock()
 
 	for ch := range client.controlSubscribers {
+		if ch == excludeChan {
+			continue
+		}
 		select {
 		case ch <- msg:
 		default:
