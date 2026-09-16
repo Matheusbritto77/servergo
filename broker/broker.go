@@ -193,9 +193,24 @@ func (b *Broker) AuthenticateControl(ctx context.Context, req *pb.AuthRequest) (
 
 // ── 6-Channel gRPC Streaming RPC Handlers ──
 
-// Channel 1 & 2: VideoStream (Host streams VideoFrame -> Broker relays to Operators; Operators stream VideoControlCommand -> Broker relays to Host)
+// Channel 1 & 2: VideoStream (Host streams VideoFrame -> Broker relays to Operators)
 func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
+	_ = stream.SendHeader(metadata.MD{})
 	var registeredID string
+	var ch chan *pb.VideoFrame
+	done := make(chan struct{})
+
+	defer func() {
+		close(done)
+		if registeredID != "" && ch != nil {
+			if client, exists := b.findClient(registeredID); exists {
+				client.videoSubMutex.Lock()
+				delete(client.videoSubscribers, ch)
+				client.videoSubMutex.Unlock()
+				close(ch)
+			}
+		}
+	}()
 
 	for {
 		frame, err := stream.Recv()
@@ -207,12 +222,37 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 		}
 
 		if registeredID == "" {
-			// Find active client registered
 			registeredID = b.getFirstClientID()
+			if registeredID != "" {
+				ch = make(chan *pb.VideoFrame, 64)
+				if client, exists := b.findClient(registeredID); exists {
+					client.videoSubMutex.Lock()
+					client.videoSubscribers[ch] = true
+					subCount := len(client.videoSubscribers)
+					client.videoSubMutex.Unlock()
+					log.Printf("📹 [BROKER] VideoStream subscriber registered for ID: %s (Active subscribers: %d)", registeredID, subCount)
+
+					go func(subscriberChan chan *pb.VideoFrame) {
+						for {
+							select {
+							case <-done:
+								return
+							case outFrame, ok := <-subscriberChan:
+								if !ok {
+									return
+								}
+								if err := stream.Send(outFrame); err != nil {
+									return
+								}
+							}
+						}
+					}(ch)
+				}
+			}
 		}
 
-		if registeredID != "" {
-			b.BroadcastVideoFrame(registeredID, frame)
+		if len(frame.Data) > 0 && registeredID != "" {
+			b.BroadcastVideoFrameEx(registeredID, frame, ch)
 		}
 	}
 }
@@ -227,6 +267,10 @@ func (b *Broker) getFirstClientID() string {
 }
 
 func (b *Broker) BroadcastVideoFrame(clientID string, frame *pb.VideoFrame) {
+	b.BroadcastVideoFrameEx(clientID, frame, nil)
+}
+
+func (b *Broker) BroadcastVideoFrameEx(clientID string, frame *pb.VideoFrame, excludeChan chan *pb.VideoFrame) {
 	client, exists := b.findClient(clientID)
 	if !exists || client == nil {
 		return
@@ -236,6 +280,9 @@ func (b *Broker) BroadcastVideoFrame(clientID string, frame *pb.VideoFrame) {
 	defer client.videoSubMutex.RUnlock()
 
 	for ch := range client.videoSubscribers {
+		if ch == excludeChan {
+			continue
+		}
 		select {
 		case ch <- frame:
 		default:
@@ -246,7 +293,23 @@ func (b *Broker) BroadcastVideoFrame(clientID string, frame *pb.VideoFrame) {
 
 // Channel 3 & 4: InputStream (Operators send InputEvent -> Broker forwards to Host)
 func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
+	_ = stream.SendHeader(metadata.MD{})
 	var targetID string
+	var ch chan *pb.InputEvent
+	done := make(chan struct{})
+
+	defer func() {
+		close(done)
+		if targetID != "" && ch != nil {
+			if client, exists := b.findClient(targetID); exists {
+				client.inputSubMutex.Lock()
+				delete(client.inputSubscribers, ch)
+				client.inputSubMutex.Unlock()
+				close(ch)
+			}
+		}
+	}()
+
 	for {
 		event, err := stream.Recv()
 		if err == io.EOF {
@@ -258,15 +321,45 @@ func (b *Broker) InputStream(stream pb.RemoteDesktop_InputStreamServer) error {
 
 		if targetID == "" {
 			targetID = b.getFirstClientID()
+			if targetID != "" {
+				ch = make(chan *pb.InputEvent, 128)
+				if client, exists := b.findClient(targetID); exists {
+					client.inputSubMutex.Lock()
+					client.inputSubscribers[ch] = true
+					subCount := len(client.inputSubscribers)
+					client.inputSubMutex.Unlock()
+					log.Printf("⌨️ [BROKER] InputStream subscriber registered for ID: %s (Active subscribers: %d)", targetID, subCount)
+
+					go func(subscriberChan chan *pb.InputEvent) {
+						for {
+							select {
+							case <-done:
+								return
+							case outEv, ok := <-subscriberChan:
+								if !ok {
+									return
+								}
+								if err := stream.Send(outEv); err != nil {
+									return
+								}
+							}
+						}
+					}(ch)
+				}
+			}
 		}
 
-		if targetID != "" {
-			b.BroadcastInputEvent(targetID, event)
+		if event.Event != nil && targetID != "" {
+			b.BroadcastInputEventEx(targetID, event, ch)
 		}
 	}
 }
 
 func (b *Broker) BroadcastInputEvent(clientID string, event *pb.InputEvent) {
+	b.BroadcastInputEventEx(clientID, event, nil)
+}
+
+func (b *Broker) BroadcastInputEventEx(clientID string, event *pb.InputEvent, excludeChan chan *pb.InputEvent) {
 	client, exists := b.findClient(clientID)
 	if !exists || client == nil {
 		return
@@ -276,6 +369,9 @@ func (b *Broker) BroadcastInputEvent(clientID string, event *pb.InputEvent) {
 	defer client.inputSubMutex.RUnlock()
 
 	for ch := range client.inputSubscribers {
+		if ch == excludeChan {
+			continue
+		}
 		select {
 		case ch <- event:
 		default:

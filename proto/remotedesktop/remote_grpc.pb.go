@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.3.0
 // - protoc             v7.36.1
-// source: remote.proto
+// source: proto/remotedesktop/remote.proto
 
 package remotedesktop
 
@@ -37,9 +37,9 @@ type RemoteDesktopClient interface {
 	AuthenticateControl(ctx context.Context, in *AuthRequest, opts ...grpc.CallOption) (*AuthResponse, error)
 	// Auto-Update service check
 	CheckUpdate(ctx context.Context, in *UpdateCheckRequest, opts ...grpc.CallOption) (*UpdateCheckResponse, error)
-	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream & Control (Host <-> Broker <-> Operator)
+	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream (Host -> Broker -> Operator)
 	VideoStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_VideoStreamClient, error)
-	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator <-> Broker <-> Host)
+	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator -> Broker -> Host)
 	InputStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_InputStreamClient, error)
 	// Channel 5 & 6: Control Commands, ConnectRequest & HostStatus Stream (Host <-> Broker <-> Operator)
 	ControlCommandStream(ctx context.Context, opts ...grpc.CallOption) (RemoteDesktop_ControlCommandStreamClient, error)
@@ -91,7 +91,7 @@ func (c *remoteDesktopClient) VideoStream(ctx context.Context, opts ...grpc.Call
 
 type RemoteDesktop_VideoStreamClient interface {
 	Send(*VideoFrame) error
-	Recv() (*VideoControlCommand, error)
+	Recv() (*VideoFrame, error)
 	grpc.ClientStream
 }
 
@@ -103,8 +103,8 @@ func (x *remoteDesktopVideoStreamClient) Send(m *VideoFrame) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *remoteDesktopVideoStreamClient) Recv() (*VideoControlCommand, error) {
-	m := new(VideoControlCommand)
+func (x *remoteDesktopVideoStreamClient) Recv() (*VideoFrame, error) {
+	m := new(VideoFrame)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (c *remoteDesktopClient) InputStream(ctx context.Context, opts ...grpc.Call
 
 type RemoteDesktop_InputStreamClient interface {
 	Send(*InputEvent) error
-	Recv() (*InputAck, error)
+	Recv() (*InputEvent, error)
 	grpc.ClientStream
 }
 
@@ -134,8 +134,8 @@ func (x *remoteDesktopInputStreamClient) Send(m *InputEvent) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *remoteDesktopInputStreamClient) Recv() (*InputAck, error) {
-	m := new(InputAck)
+func (x *remoteDesktopInputStreamClient) Recv() (*InputEvent, error) {
+	m := new(InputEvent)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -183,9 +183,9 @@ type RemoteDesktopServer interface {
 	AuthenticateControl(context.Context, *AuthRequest) (*AuthResponse, error)
 	// Auto-Update service check
 	CheckUpdate(context.Context, *UpdateCheckRequest) (*UpdateCheckResponse, error)
-	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream & Control (Host <-> Broker <-> Operator)
+	// Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream (Host -> Broker -> Operator)
 	VideoStream(RemoteDesktop_VideoStreamServer) error
-	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator <-> Broker <-> Host)
+	// Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator -> Broker -> Host)
 	InputStream(RemoteDesktop_InputStreamServer) error
 	// Channel 5 & 6: Control Commands, ConnectRequest & HostStatus Stream (Host <-> Broker <-> Operator)
 	ControlCommandStream(RemoteDesktop_ControlCommandStreamServer) error
@@ -286,7 +286,7 @@ func _RemoteDesktop_VideoStream_Handler(srv interface{}, stream grpc.ServerStrea
 }
 
 type RemoteDesktop_VideoStreamServer interface {
-	Send(*VideoControlCommand) error
+	Send(*VideoFrame) error
 	Recv() (*VideoFrame, error)
 	grpc.ServerStream
 }
@@ -295,7 +295,7 @@ type remoteDesktopVideoStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *remoteDesktopVideoStreamServer) Send(m *VideoControlCommand) error {
+func (x *remoteDesktopVideoStreamServer) Send(m *VideoFrame) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -312,7 +312,7 @@ func _RemoteDesktop_InputStream_Handler(srv interface{}, stream grpc.ServerStrea
 }
 
 type RemoteDesktop_InputStreamServer interface {
-	Send(*InputAck) error
+	Send(*InputEvent) error
 	Recv() (*InputEvent, error)
 	grpc.ServerStream
 }
@@ -321,7 +321,7 @@ type remoteDesktopInputStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *remoteDesktopInputStreamServer) Send(m *InputAck) error {
+func (x *remoteDesktopInputStreamServer) Send(m *InputEvent) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -399,5 +399,5 @@ var RemoteDesktop_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "remote.proto",
+	Metadata: "proto/remotedesktop/remote.proto",
 }

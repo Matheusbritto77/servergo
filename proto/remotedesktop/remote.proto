@@ -16,11 +16,11 @@ service RemoteDesktop {
   // Auto-Update service check
   rpc CheckUpdate (UpdateCheckRequest) returns (UpdateCheckResponse);
 
-  // Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream & Control (Host <-> Broker <-> Operator)
-  rpc VideoStream (stream VideoFrame) returns (stream VideoControlCommand);
+  // Channel 1 & 2: Parallel FFMPEG / H.264 Video Stream (Host -> Broker -> Operator)
+  rpc VideoStream (stream VideoFrame) returns (stream VideoFrame);
 
-  // Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator <-> Broker <-> Host)
-  rpc InputStream (stream InputEvent) returns (stream InputAck);
+  // Channel 3 & 4: Real-time Low-Latency Mouse & Keyboard Input Stream (Operator -> Broker -> Host)
+  rpc InputStream (stream InputEvent) returns (stream InputEvent);
 
   // Channel 5 & 6: Control Commands, ConnectRequest & HostStatus Stream (Host <-> Broker <-> Operator)
   rpc ControlCommandStream (stream ControlMessage) returns (stream ControlMessage);
