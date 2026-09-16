@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const videoBufferBytes = 4 * 1024 * 1024
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	log.Printf("⚡ High-Performance Multi-Core Engine Initialized: GOMAXPROCS = %d", runtime.NumCPU())
@@ -69,12 +71,12 @@ func main() {
 	grpcServer := grpc.NewServer(
 		grpc.KeepaliveParams(kaParams),
 		grpc.KeepaliveEnforcementPolicy(kaEnforce),
-		grpc.MaxRecvMsgSize(16*1024*1024),
-		grpc.MaxSendMsgSize(16*1024*1024),
-		grpc.ReadBufferSize(8*1024*1024),
-		grpc.WriteBufferSize(8*1024*1024),
-		grpc.InitialWindowSize(8*1024*1024),
-		grpc.InitialConnWindowSize(16*1024*1024),
+		grpc.MaxRecvMsgSize(videoBufferBytes),
+		grpc.MaxSendMsgSize(videoBufferBytes),
+		grpc.ReadBufferSize(videoBufferBytes),
+		grpc.WriteBufferSize(videoBufferBytes),
+		grpc.InitialWindowSize(videoBufferBytes),
+		grpc.InitialConnWindowSize(videoBufferBytes),
 		grpc.MaxConcurrentStreams(1000),
 	)
 	pb.RegisterRemoteDesktopServer(grpcServer, b)

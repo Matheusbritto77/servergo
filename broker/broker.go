@@ -20,6 +20,8 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
+const videoBufferBytes = 4 * 1024 * 1024
+
 type ActiveClient struct {
 	ClientID     string
 	MachineName  string
@@ -28,13 +30,13 @@ type ActiveClient struct {
 	RegisteredAt time.Time
 
 	// gRPC 6-Channel Stream Handlers
-	videoSubscribers   map[chan *pb.VideoFrame]bool
-	videoSubMutex      sync.RWMutex
-	videoControlChan   chan *pb.VideoControlCommand
+	videoSubscribers map[chan *pb.VideoFrame]bool
+	videoSubMutex    sync.RWMutex
+	videoControlChan chan *pb.VideoControlCommand
 
-	inputSubscribers   map[chan *pb.InputEvent]bool
-	inputSubMutex      sync.RWMutex
-	inputAckChan       chan *pb.InputAck
+	inputSubscribers map[chan *pb.InputEvent]bool
+	inputSubMutex    sync.RWMutex
+	inputAckChan     chan *pb.InputAck
 
 	controlSubscribers map[chan *pb.ControlMessage]bool
 	controlSubMutex    sync.RWMutex
@@ -336,7 +338,7 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 		}
 
 		if ch == nil && registeredID != "" {
-			ch = make(chan *pb.VideoFrame, 16)
+			ch = make(chan *pb.VideoFrame, 4)
 			if client, exists := b.findClient(registeredID); exists {
 				client.videoSubMutex.Lock()
 				client.videoSubscribers[ch] = true
@@ -362,7 +364,7 @@ func (b *Broker) VideoStream(stream pb.RemoteDesktop_VideoStreamServer) error {
 			}
 		}
 
-		if len(frame.Data) > 0 && registeredID != "" {
+		if len(frame.Data) > 0 && len(frame.Data) <= videoBufferBytes && registeredID != "" {
 			b.BroadcastVideoFrameEx(registeredID, frame, ch)
 		}
 	}
