@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,10 +82,21 @@ func (b *Broker) ListClients() []ClientInfo {
 	return list
 }
 
+func (b *Broker) normalizeClientID(id string) string {
+	if strings.HasPrefix(id, "sess_") {
+		parts := strings.Split(id, "_")
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+	}
+	return id
+}
+
 func (b *Broker) findClient(clientID string) (*ActiveClient, bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	c, exists := b.clients[clientID]
+	id := b.normalizeClientID(clientID)
+	c, exists := b.clients[id]
 	return c, exists
 }
 
@@ -270,8 +282,10 @@ func (b *Broker) BroadcastInputEvent(clientID string, event *pb.InputEvent) {
 func (b *Broker) ControlCommandStream(stream pb.RemoteDesktop_ControlCommandStreamServer) error {
 	var clientID string
 	var ch chan *pb.ControlMessage
+	done := make(chan struct{})
 
 	defer func() {
+		close(done)
 		if clientID != "" && ch != nil {
 			if client, exists := b.findClient(clientID); exists {
 				client.controlSubMutex.Lock()
@@ -292,16 +306,34 @@ func (b *Broker) ControlCommandStream(stream pb.RemoteDesktop_ControlCommandStre
 		}
 
 		if clientID == "" && msg.SessionId != "" {
-			clientID = msg.SessionId
+			clientID = b.normalizeClientID(msg.SessionId)
 			ch = make(chan *pb.ControlMessage, 128)
 			if client, exists := b.findClient(clientID); exists {
 				client.controlSubMutex.Lock()
 				client.controlSubscribers[ch] = true
 				client.controlSubMutex.Unlock()
+
+				go func(subscriberChan chan *pb.ControlMessage) {
+					for {
+						select {
+						case <-done:
+							return
+						case outMsg, ok := <-subscriberChan:
+							if !ok {
+								return
+							}
+							if err := stream.Send(outMsg); err != nil {
+								return
+							}
+						}
+					}
+				}(ch)
 			}
 		}
 
-		b.BroadcastControlMessage(clientID, msg)
+		if clientID != "" {
+			b.BroadcastControlMessage(clientID, msg)
+		}
 	}
 }
 
